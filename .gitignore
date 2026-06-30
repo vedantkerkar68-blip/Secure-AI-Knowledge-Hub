@@ -1,0 +1,57 @@
+# Java
+
+target/
+*.class
+*.jar
+*.war
+
+# Maven
+
+.mvn/
+.settings/
+
+# IntelliJ
+
+.idea/
+*.iml
+
+# VS Code
+
+.vscode/
+
+# Node
+
+node_modules/
+
+# React
+
+build/
+dist/
+
+# Logs
+
+logs/
+*.log
+
+# Environment
+
+.env
+.env.*
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# Docker
+
+docker-data/
+
+# PostgreSQL
+
+postgres-data/
+
+# Temporary Files
+
+tmp/
+temp/
