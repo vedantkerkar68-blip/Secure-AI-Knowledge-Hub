@@ -1,0 +1,9 @@
+Always follow Layered Architecture.
+
+Controllers contain no business logic.
+
+Business logic belongs in Services.
+
+Repositories access only the database.
+
+Follow the package structure defined in AGENTS.md.

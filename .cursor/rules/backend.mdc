@@ -1,0 +1,13 @@
+Always use Java 21.
+
+Always use Spring Boot.
+
+Always use constructor injection.
+
+Always use DTOs.
+
+Never expose JPA entities directly.
+
+Use validation annotations.
+
+Use Global Exception Handling.
