@@ -2,32 +2,48 @@
 
 # Secure AI Knowledge Hub (SAKH)
 
-This file defines how AI coding agents must work on this repository.
+This file defines the development rules for all AI coding agents working on this repository.
 
-It is the primary instruction document for AI-assisted development.
+Every AI agent must follow these instructions before modifying any source code.
 
 ---
 
-# Project Summary
+# Project Overview
 
-Secure AI Knowledge Hub (SAKH) is an enterprise knowledge management platform.
+Secure AI Knowledge Hub (SAKH) is an enterprise knowledge management platform that enables organizations to securely store, process, search, and retrieve internal knowledge using Retrieval-Augmented Generation (RAG).
 
-Users upload organizational documents.
+The system enforces Role-Based Access Control (RBAC) so that every AI-generated response respects the permissions of the requesting user.
 
-The backend extracts knowledge, generates embeddings and uses Retrieval-Augmented Generation (RAG) to answer questions.
+---
 
-Every answer must respect Role-Based Access Control (RBAC).
+# Technology Stack
 
-The system is built using
+## Backend
 
 - Java 21
-- Spring Boot
+- Spring Boot 3.x
+- Spring Security
+- Spring Data JPA
 - PostgreSQL
+- Flyway
+- JWT
+- Maven
+
+## Frontend
+
 - React
 - TypeScript
-- Docker
-- API-based LLM
+- Material UI
+- Axios
+- React Router
+
+## AI
+
+- RAG
 - pgvector
+- Embedding API
+- LLM API
+- Hybrid Search
 
 ---
 
@@ -36,170 +52,142 @@ The system is built using
 Layered Architecture
 
 Controller
-
 ↓
-
 Service
-
 ↓
-
 Repository
-
 ↓
-
 Database
 
-Controllers never contain business logic.
+Rules
+
+- Controllers must not contain business logic.
+- Services contain all business logic.
+- Repositories only access the database.
+- DTOs must be used for every REST API.
+- Constructor injection only.
+- Never expose JPA entities directly.
 
 ---
 
 # Repository Structure
 
+```
+Secure-AI-Knowledge-Hub/
+
 backend/
-
 frontend/
-
 docs/
-
-knowledge/
-
 storage/
-
 docker/
+```
 
 ---
 
-# Development Rules
+Before implementing any feature:
 
-Always read
+Read
 
-docs/01_PROJECT_SPEC.md
+docs/MASTER_CONTEXT.md
 
-docs/04_ARCHITECTURE.md
+If database work:
 
-before implementing any feature.
+Read
 
-If implementing database features
+docs/contracts/database_schema.md
 
-also read
 
-docs/contracts/database.sql
+# Documentation
 
-If implementing APIs
+Before implementing any feature, always read:
 
-also read
+```
+docs/vision/PROJECT_SPEC.md
+docs/architecture/ARCHITECTURE.md
+docs/contracts/database_schema.md
 
+```
+
+If working on database migrations:
+
+```
+backend/src/main/resources/db/migration/
+```
+
+If working on REST APIs:
+
+```
 docs/contracts/openapi.yaml
+```
 
----
+If any required document is missing:
 
-# Coding Rules
-
-Never invent database tables.
-
-Never invent REST APIs.
-
-Never rename existing fields.
-
-Never create duplicate classes.
-
-Never expose entities directly in REST APIs.
-
-Always use DTOs.
-
-Always use constructor injection.
-
-Always follow package structure.
-
-Always create JavaDoc for public classes.
-
----
-
-# Security Rules
-
-Always verify JWT before accessing protected endpoints.
-
-Never bypass authorization.
-
-Passwords must always use BCrypt.
-
-Never store secrets in source code.
-
----
-
-# AI Rules
-
-If a required file is missing
-
-STOP
+STOP.
 
 Do not guess.
 
 Ask for clarification.
 
-Never generate incomplete code pretending it is complete.
+---
 
-If modifying existing code
+# Development Rules
 
-Read the existing files first.
+- Never invent database tables.
+- Never invent REST endpoints.
+- Never rename existing database columns.
+- Never modify unrelated files.
+- Never generate placeholder implementations.
+- Always generate production-ready code.
+- Keep methods small and readable.
+- Use JavaDoc for public classes.
+- Follow the existing package structure.
 
-Never overwrite unrelated code.
+---
+
+# Security Rules
+
+- Always verify JWT before protected endpoints.
+- Never bypass authorization.
+- Always hash passwords using BCrypt.
+- Never store secrets in source code.
+- Use environment variables for credentials.
+
+---
+
+# Database Rules
+
+- Flyway is the single source of truth for database migrations.
+- Every schema change requires a new Flyway migration.
+- Never modify an existing migration after it has been committed.
+- PostgreSQL is the only supported database.
+- Use pgvector for embedding storage.
 
 ---
 
 # Git Rules
 
-One feature per commit.
-
-Small commits.
-
-Never modify multiple unrelated modules in one change.
-
----
-
-# Backend Stack
-
-Java 21
-
-Spring Boot
-
-Spring Security
-
-Spring Data JPA
-
-PostgreSQL
-
-JWT
-
-Maven
+- One feature per commit.
+- Small commits.
+- Do not mix unrelated changes.
+- Ensure the project builds before committing.
 
 ---
 
-# Frontend Stack
+# AI Agent Workflow
 
-React
+For every task:
 
-TypeScript
+1. Read the required specifications.
+2. Explain the implementation plan.
+3. Modify only the required files.
+4. Show a summary of changes.
+5. Wait for approval before continuing.
 
-Material UI
+Never generate additional features that were not requested.
 
-Axios
+Never assume missing requirements.
 
-React Router
-
----
-
-# AI Stack
-
-Embedding API
-
-LLM API
-
-RAG
-
-Hybrid Search
-
-pgvector
+Always ask if something is ambiguous.
 
 ---
 

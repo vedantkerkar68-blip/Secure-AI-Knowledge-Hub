@@ -1,0 +1,156 @@
+# ===================================================================
+# Spring Boot Configuration for Secure AI Knowledge Hub (SAKH)
+# File: application.yml
+# Target: Java 21 & Spring Boot 3.x
+# ===================================================================
+
+# -------------------------------------------------------------------
+# Server Settings
+# -------------------------------------------------------------------
+server:
+  # The port on which the Spring Boot application will listen.
+  
+  servlet:
+    # Optional prefix for all REST APIs. Useful for routing rules.
+    context-path: /api
+
+# -------------------------------------------------------------------
+# Spring Framework Core Settings
+# -------------------------------------------------------------------
+spring:
+  profiles:
+    active: dev
+  jackson:
+    serialization:
+      indent-output: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+  sql:
+    init:
+      mode: never
+  application:
+    # The name of the application, used in logs, registry, and trace contexts.
+    # Configured as requested: secure-ai-knowledge-hub
+    name: secure-ai-knowledge-hub
+
+  # -----------------------------------------------------------------
+  # Database Settings (PostgreSQL configuration with placeholders)
+  # -----------------------------------------------------------------
+  datasource:
+    # The JDBC URL of the PostgreSQL database.
+    # Placeholders are used to support environment variables, falling back to local defaults.
+    # format: jdbc:postgresql://<host>:<port>/<database_name>
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:sakh_db}
+    
+    # The username used to authenticate with the PostgreSQL database.
+    username: ${DB_USERNAME:postgres}
+    
+    # The password used to authenticate with the PostgreSQL database.
+    password: ${DB_PASSWORD:postgres}
+    
+    # Fully qualified name of the PostgreSQL JDBC Driver.
+    driver-class-name: org.postgresql.Driver
+    
+    # Hikari Connection Pool settings (built-in production-ready pool in Spring Boot)
+    hikari:
+      # Maximum number of idle connections in the pool.
+      minimum-idle: 5
+      # Maximum size that the pool is allowed to reach (active + idle connections).
+      maximum-pool-size: 20
+      # Maximum time (ms) that a client will wait for a connection from the pool.
+      connection-timeout: 30000
+      # Maximum life time of a connection in the pool.
+      max-lifetime: 1800000
+
+  # -----------------------------------------------------------------
+  # JPA & Hibernate Settings
+  # -----------------------------------------------------------------
+  jpa:
+    # Explicitly sets the database platform dialect to PostgreSQL to ensure
+    # Hibernate generates database-specific, optimized SQL syntax.
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    
+    # Hibernate DDL generation strategy.
+    # In production, this should be 'validate' to prevent accidental schema changes.
+    # For development, you can set it to 'update' or use schema migrations (e.g. Flyway).
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:validate}
+    
+    # Toggles showing SQL statements printed to console for debugging database interactions.
+    show-sql: ${JPA_SHOW_SQL:false}
+    
+    properties:
+      hibernate:
+        # Prettifies SQL outputs printed to the console when spring.jpa.show-sql is true.
+        format_sql: true
+        # Helps in performance tuning by specifying how JDBC batch updates are handled.
+        jdbc:
+          batch_size: 20
+        # Automatically registers types and features for performance improvements.
+        order_inserts: true
+        order_updates: true
+
+  # -----------------------------------------------------------------
+  # File Upload Settings (with placeholders)
+  # -----------------------------------------------------------------
+  servlet:
+    multipart:
+      # Enable support of multi-part uploads.
+      enabled: true
+      # Max file size allowed for a single uploaded file.
+      max-file-size: ${MAX_FILE_SIZE:10MB}
+      # Max request size allowed for multi-part/form-data requests (combining multiple files).
+      max-request-size: ${MAX_REQUEST_SIZE:50MB}
+
+# -------------------------------------------------------------------
+# Security Settings: JWT & Authentication (with placeholders)
+# -------------------------------------------------------------------
+security:
+  jwt:
+    # Secret key used to sign and verify JWT tokens.
+    # Must be at least 256 bits (32 bytes) long and highly secure.
+    # A placeholder is provided, backed by a secure default for development.
+    secret-key: ${JWT_SECRET:9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p3q2r1s0t9u8v7w6x5y4z321098765432}
+    
+    # Token validity period in milliseconds (e.g., 86400000 ms = 24 hours).
+    expiration: ${JWT_EXPIRATION_MS:86400000}
+    
+    # The issuer of the token, identifying the security principal generating it.
+    issuer: ${JWT_ISSUER:secure-ai-knowledge-hub}
+
+# -------------------------------------------------------------------
+# Custom Application Properties (with placeholders)
+# -------------------------------------------------------------------
+app:
+  # -----------------------------------------------------------------
+  # Local File Storage Settings
+  # -----------------------------------------------------------------
+  storage:
+    upload-dir: ./storage/uploads
+
+# -------------------------------------------------------------------
+# Logging Settings (with placeholders)
+# -------------------------------------------------------------------
+logging:
+  # Pattern to format console logs.
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  
+  # Configure log files to capture server output persistently.
+  file:
+    # Path to log file destination.
+    name: ${LOG_FILE_PATH:logs/secure-ai-knowledge-hub.log}
+
+  level:
+    # The default logging level for all third-party libraries and root namespace.
+    root: ${LOG_LEVEL_ROOT:INFO}
+    
+    # Target levels for specific frameworks to minimize log verbosity.
+    org.springframework: INFO
+    org.springframework.security: ${LOG_LEVEL_SECURITY:INFO}
+    org.hibernate.SQL: ${LOG_LEVEL_SQL:INFO}
+    
+    # Application-specific logging level for com.sakh.backend.
+    com.sakh: ${LOG_LEVEL_APP:DEBUG}
