@@ -42,13 +42,13 @@ spring:
     # The JDBC URL of the PostgreSQL database.
     # Placeholders are used to support environment variables, falling back to local defaults.
     # format: jdbc:postgresql://<host>:<port>/<database_name>
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:sakh_db}
+    url: jdbc:postgresql://localhost:5432/sakh_db
     
     # The username used to authenticate with the PostgreSQL database.
-    username: ${DB_USERNAME:postgres}
+    username: postgres
     
     # The password used to authenticate with the PostgreSQL database.
-    password: ${DB_PASSWORD:postgres}
+    password: root
     
     # Fully qualified name of the PostgreSQL JDBC Driver.
     driver-class-name: org.postgresql.Driver

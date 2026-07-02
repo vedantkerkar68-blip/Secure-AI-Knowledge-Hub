@@ -2,7 +2,7 @@
 -- Initial schema migration
 -- PostgreSQL 17 + pgvector
 
-CREATE EXTENSION IF NOT EXISTS vector;
+--CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ---------------------------------------------------------------------------
 -- roles
@@ -107,7 +107,6 @@ CREATE TABLE chunks (
     page_number   INTEGER,
     section_title VARCHAR(255),
     token_count   INTEGER,
-    embedding     VECTOR(768),
     created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_chunks_document
         FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE,
