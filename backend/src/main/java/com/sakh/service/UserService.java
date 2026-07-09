@@ -2,6 +2,7 @@ package com.sakh.service;
 
 import com.sakh.dto.user.UserProfileResponse;
 import com.sakh.entity.User;
+import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.UserRepository;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -27,7 +28,7 @@ public class UserService {
         }
 
         User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalStateException("User not found: " + email));
+                .orElseThrow(() -> new ResourceNotFoundException("User not found with email: " + email));
 
         return UserProfileResponse.builder()
                 .id(user.getId())
