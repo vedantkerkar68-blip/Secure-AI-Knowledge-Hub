@@ -6,6 +6,8 @@ import com.sakh.entity.Department;
 import com.sakh.exception.DuplicateResourceException;
 import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.DepartmentRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -40,6 +42,10 @@ public class DepartmentService {
         return departmentRepository.findAll().stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    public Page<DepartmentResponse> getAllDepartments(Pageable pageable) {
+        return departmentRepository.findAll(pageable).map(this::toResponse);
     }
 
     public DepartmentResponse updateDepartment(Long id, DepartmentRequest request) {
