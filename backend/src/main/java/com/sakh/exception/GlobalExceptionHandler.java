@@ -10,7 +10,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 /**
  * Handles application exceptions and returns consistent API error responses.
  */
@@ -43,13 +44,39 @@ public class GlobalExceptionHandler {
 
 		return buildErrorResponse(HttpStatus.BAD_REQUEST, message, request);
 	}
+	@ExceptionHandler(AccessDeniedException.class)
+public ResponseEntity<ApiError> handleAccessDenied(
+        AccessDeniedException exception,
+        HttpServletRequest request) {
+
+    return buildErrorResponse(
+            HttpStatus.FORBIDDEN,
+            "Access denied.",
+            request);
+}
+@ExceptionHandler(AuthenticationException.class)
+public ResponseEntity<ApiError> handleAuthentication(
+        AuthenticationException exception,
+        HttpServletRequest request) {
+
+    return buildErrorResponse(
+            HttpStatus.UNAUTHORIZED,
+            "Authentication failed.",
+            request);
+}
 
 	@ExceptionHandler(Exception.class)
-	public ResponseEntity<ApiError> handleUnexpectedException(
-			Exception exception,
-			HttpServletRequest request) {
-		return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred.", request);
-	}
+public ResponseEntity<ApiError> handleUnexpectedException(
+        Exception exception,
+        HttpServletRequest request) {
+
+    exception.printStackTrace();   // Print full stack trace
+
+    return buildErrorResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            exception.getMessage(),
+            request);
+}
 
 	private ResponseEntity<ApiError> buildErrorResponse(
 			HttpStatus status,

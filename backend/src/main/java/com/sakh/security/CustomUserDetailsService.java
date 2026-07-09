@@ -35,6 +35,8 @@ public class CustomUserDetailsService implements UserDetailsService {
 	}
 
 	private List<SimpleGrantedAuthority> mapAuthorities(User user) {
-		return List.of(new SimpleGrantedAuthority(user.getRole().getName()));
-	}
+    return List.of(
+        new SimpleGrantedAuthority("ROLE_" + user.getRole().getName())
+    );
+}
 }
