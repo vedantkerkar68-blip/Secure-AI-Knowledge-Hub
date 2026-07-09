@@ -7,4 +7,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
  * Repository for accessing department records.
  */
 public interface DepartmentRepository extends JpaRepository<Department, Long> {
+
+    boolean existsByName(String name);
 }

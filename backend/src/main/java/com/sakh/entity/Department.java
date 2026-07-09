@@ -33,6 +33,6 @@ public class Department {
 	@Column(name = "description", columnDefinition = "TEXT")
 	private String description;
 
-	@Column(name = "created_at")
-	private Instant createdAt;
+	@Column(nullable = false, updatable = false)
+	private Instant createdAt = Instant.now();
 }
