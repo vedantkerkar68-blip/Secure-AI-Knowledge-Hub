@@ -1,13 +1,12 @@
 package com.sakh.enums;
 
 /**
- * Represents the processing lifecycle of an uploaded document.
+ * Represents the processing status of a document.
  */
 public enum DocumentStatus {
 
-	UPLOADED,
-	PROCESSING,
-	PROCESSED,
-	FAILED,
-	ARCHIVED
+    PENDING,
+    PROCESSING,
+    COMPLETED,
+    FAILED
 }
