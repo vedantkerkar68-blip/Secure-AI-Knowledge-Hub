@@ -1,0 +1,253 @@
+================================================================================
+  Secure AI Knowledge Hub (SAKH) - Issues & Resolutions Log
+================================================================================
+
+This document records significant technical issues encountered during development
+and the solutions applied to resolve them.
+
+================================================================================
+  ISSUE 1: Spring AI Migration - Manual Embedding Code vs Spring AI
+================================================================================
+
+Problem:
+--------
+The project originally used manual pgvector JDBC code for storing and querying
+embeddings. This included:
+- Custom `PgvectorConverter` for JPA entity mapping
+- `PgvectorConfig` (JdbcTemplate bean for pgvector)
+- `EmbeddingService` with custom SQL for nearest-neighbor search
+- `EmbeddingProvider` / `GeminiEmbeddingProvider` for calling the embedding API
+- The `Chunk` JPA entity had `embedding` (PGvector type) and `embedding_model` fields
+- Flyway V2 created `CREATE EXTENSION vector` and `ALTER TABLE chunks ADD COLUMN embedding`
+- `ChunkRepository` had a custom `findNearestNeighborsByDocumentId()` using `<=>` operator
+
+This created a conflict with Spring AI 1.1.8's built-in `PgVectorStore` which manages
+its own `vector_store` table and handles embedding generation automatically.
+
+Resolution:
+-----------
+1. Removed `embedding` and `embedding_model` columns from `Chunk.java`
+2. Removed `@Convert(converter = PgvectorConverter.class)` annotation
+3. Deleted 5 legacy classes:
+   - `com/sakh/ai/embedding/PgvectorConverter.java`
+   - `com/sakh/ai/embedding/PgvectorConfig.java`
+   - `com/sakh/ai/embedding/EmbeddingService.java`
+   - `com/sakh/ai/embedding/EmbeddingProvider.java`
+   - `com/sakh/ai/embedding/GeminiEmbeddingProvider.java`
+4. Updated Flyway V2: removed embedding-related SQL (kept only versioning columns)
+5. Created Flyway V3: drops `embedding` and `embedding_model` columns from existing DBs
+6. Cleaned `ChunkRepository`: removed `findNearestNeighborsByDocumentId()`
+7. Cleaned `DocumentProcessingService`: removed unused `EmbeddingModel` injection
+8. Removed explicit pgvector Maven dependency from pom.xml
+9. All embedding operations now go through Spring AI's PgVectorStore
+
+
+================================================================================
+  ISSUE 2: Spring AI 1.1.8 Configuration - Wrong Auto-Config Format
+================================================================================
+
+Problem:
+--------
+The application.yml had:
+```yaml
+spring:
+  ai:
+    model:
+      embedding: google-genai
+```
+This format does not properly trigger Google GenAI embedding auto-configuration
+in Spring AI 1.1.8. The `GoogleGenAiEmbeddingAutoConfiguration` condition requires
+`spring.ai.model.embedding` to be a nested object, not a simple string.
+
+Resolution:
+-----------
+Changed to:
+```yaml
+spring:
+  ai:
+    model:
+      embedding:
+        text: google-genai
+```
+This nested format correctly triggers the `OnModelCondition` check in
+`GoogleGenAiEmbeddingAutoConfiguration`.
+
+
+================================================================================
+  ISSUE 3: Google GenAI Embedding API Key Not Inherited
+================================================================================
+
+Problem:
+--------
+The embedding connection auto-configuration (`GoogleGenAiEmbeddingConnectionAutoConfiguration`)
+uses its own `@ConfigurationProperties(prefix = "spring.ai.google.genai.embedding")`,
+which is completely separate from the chat connection properties
+(`spring.ai.google.genai`). Setting `spring.ai.google.genai.api-key` does NOT
+propagate to the embedding connection.
+
+Without `api-key` in the embedding scope, the auto-config falls back to
+Vertex AI ADC (Application Default Credentials) mode, which requires:
+- `spring.ai.google.genai.embedding.project-id`
+- `spring.ai.google.genai.embedding.location`
+- GCP credentials on the machine/container
+
+This caused `401 Unauthorized` / "API key not valid" errors.
+
+Resolution:
+-----------
+Added explicit `api-key` under `spring.ai.google.genai.embedding`:
+```yaml
+spring:
+  ai:
+    google:
+      genai:
+        embedding:
+          api-key: ${GEMINI_API_KEY:hardcoded-fallback-key}
+```
+
+
+================================================================================
+  ISSUE 4: Embedding Dimension Mismatch (768 vs 3072)
+================================================================================
+
+Problem:
+--------
+The `text-embedding-004` model from Google GenAI outputs 3072-dimensional vectors,
+but the `vector_store` table (created by Spring AI's PgVectorStore) was configured
+with the default 768 dimensions via `spring.ai.vectorstore.pgvector.dimensions: 768`.
+
+This caused the error:
+```
+ERROR: expected 768 dimensions, not 3072
+```
+
+Attempting to fix this by setting `spring.ai.google.genai.embedding.options.dimensions: 768`
+did NOT work -- the model always returns 3072D vectors regardless of the dimensions option.
+
+Resolution:
+-----------
+Changed `spring.ai.vectorstore.pgvector.dimensions` from `768` to `3072` to match
+the actual model output.
+
+
+================================================================================
+  ISSUE 5: pgvector Index Limit (2000 Dimensions)
+================================================================================
+
+Problem:
+--------
+pgvector 0.8.3 (installed in PostgreSQL 17) imposes a limit of 2000 dimensions for
+both HNSW and IVFFLAT indexes. Since `text-embedding-004` outputs 3072-dimensional
+vectors, neither index type could be created.
+
+Error encountered:
+```
+ERROR: column cannot have more than 2000 dimensions for hnsw index
+ERROR: column cannot have more than 2000 dimensions for ivfflat index
+```
+
+Resolution:
+-----------
+Changed index type from HNSW to NONE:
+```yaml
+spring:
+  ai:
+    vectorstore:
+      pgvector:
+        index-type: NONE
+```
+pgvector 0.8.3 supports storing vectors up to 8000 dimensions without an index,
+which is sufficient for 3072D embeddings. The trade-off is slower similarity search
+at scale, but this can be addressed later by upgrading pgvector or implementing
+alternative indexing strategies.
+
+
+================================================================================
+  ISSUE 6: Role Authority Prefix Mismatch (ROLE_ Prefix Bug)
+================================================================================
+
+Problem:
+--------
+The application has two different implementations for creating user authorities:
+
+1. `CustomUserDetailsService.java` (line 39):
+   ```java
+   new SimpleGrantedAuthority("ROLE_" + user.getRole().getName())
+   ```
+   This prepends "ROLE_" to the role name (e.g., "ROLE_ADMIN").
+
+2. `AuthenticationService.java` (line 95):
+   ```java
+   .authorities(List.of(new SimpleGrantedAuthority(user.getRole().getName())))
+   ```
+   This does NOT prepend "ROLE_" (e.g., "ADMIN").
+
+When a user logs in via the JWT filter, `CustomUserDetailsService.loadUserByUsername()`
+is called, which returns "ROLE_ADMIN". But the `DocumentService.getCurrentUserRole()`
+method compared against "ADMIN" (without prefix):
+```java
+if ("ADMIN".equals(userRole)) { return; }
+```
+
+This check always failed for JWT-authenticated users, causing ADMIN users to be
+incorrectly treated as non-ADMIN. The code then fell through to the department-level
+access check, which threw `ResourceNotFoundException` for users without a matching
+department.
+
+Resolution:
+-----------
+Fixed `DocumentService.getCurrentUserRole()` to normalize the authority:
+```java
+private String getCurrentUserRole() {
+    Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    if (principal instanceof UserDetails userDetails) {
+        String authority = userDetails.getAuthorities().iterator().next().getAuthority();
+        if (authority.startsWith("ROLE_")) {
+            return authority.substring(5);
+        }
+        return authority;
+    }
+    return "";
+}
+```
+This strips the "ROLE_" prefix if present, making all role comparisons consistent
+across both authentication paths.
+
+
+================================================================================
+  ISSUE 7: Port Already in Use / Process Management
+================================================================================
+
+Problem:
+--------
+During development, the Spring Boot application often fails to start because
+the previous instance is still running on port 8080:
+```
+Web server failed to start. Port 8080 was already in use.
+```
+
+Resolution:
+-----------
+Kill the existing process before restarting:
+```powershell
+netstat -ano | findstr :8080
+Stop-Process -Id <PID> -Force
+```
+
+
+================================================================================
+  ISSUE 8: Application YAML Duplicate Keys
+================================================================================
+
+Problem:
+--------
+The application.yml had duplicate `index-type` keys under the pgvector section.
+One was the default HNSW and another was manually added. SnakeYAML rejects
+duplicate mapping keys with:
+```
+found duplicate key index-type
+```
+
+Resolution:
+-----------
+Removed the duplicate key, keeping only the desired value (IVFFLAT, later NONE).

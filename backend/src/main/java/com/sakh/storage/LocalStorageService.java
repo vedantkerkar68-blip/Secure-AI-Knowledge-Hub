@@ -1,11 +1,14 @@
 package com.sakh.storage;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.UrlResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -60,6 +63,21 @@ public class LocalStorageService implements StorageService {
         }
 
         return destinationFile.toString();
+    }
+
+    @Override
+    public Resource load(String storagePath) {
+        try {
+            Path file = Paths.get(storagePath);
+            Resource resource = new UrlResource(file.toUri());
+            if (resource.exists() && resource.isReadable()) {
+                return resource;
+            } else {
+                throw new StorageException("File not found: " + storagePath);
+            }
+        } catch (MalformedURLException e) {
+            throw new StorageException("File not found: " + storagePath, e);
+        }
     }
 
     @Override

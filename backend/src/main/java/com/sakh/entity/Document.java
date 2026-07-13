@@ -11,6 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -18,7 +19,7 @@ import lombok.Setter;
 import java.time.Instant;
 
 @Entity
-@Table(name = "documents")
+@Table(name = "documents", uniqueConstraints = @UniqueConstraint(columnNames = {"group_id", "version"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -58,6 +59,15 @@ public class Document {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20)
     private DocumentStatus status;
+
+    @Column(name = "group_id")
+    private Long groupId;
+
+    @Column(name = "version")
+    private Integer version;
+
+    @Column(name = "is_latest")
+    private Boolean isLatest;
 
     @Column(name = "created_at")
     private Instant createdAt;

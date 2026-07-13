@@ -7,6 +7,7 @@ public enum DocumentStatus {
 
     PENDING,
     PROCESSING,
-    COMPLETED,
-    FAILED
+    READY,
+    FAILED,
+    ARCHIVED
 }
