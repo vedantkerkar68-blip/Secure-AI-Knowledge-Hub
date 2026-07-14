@@ -1,53 +1,56 @@
 package com.sakh.llm;
 
-import com.sakh.entity.Chunk;
-import com.sakh.rag.RetrieverService;
+import com.sakh.exception.AiServiceException;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.StreamingChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
-import java.util.stream.Collectors;
+import reactor.core.publisher.Flux;
 
 @Service
 public class LLMService {
 
-    private final RetrieverService retrieverService;
-    private final LLMProvider llmProvider;
+    private final ChatModel chatModel;
+    private final StreamingChatModel streamingChatModel;
 
-    private static final String SYSTEM_PROMPT = """
-        You are a helpful AI assistant for an enterprise knowledge management system.
-        Answer questions based ONLY on the provided context from the company's internal documents.
-        If the context does not contain enough information to answer the question, say so clearly.
-        Always cite your sources by referencing the document title and chunk content.
-        Be concise and professional.
-        """;
-
-    public LLMService(RetrieverService retrieverService, LLMProvider llmProvider) {
-        this.retrieverService = retrieverService;
-        this.llmProvider = llmProvider;
+    public LLMService(ChatModel chatModel, StreamingChatModel streamingChatModel) {
+        this.chatModel = chatModel;
+        this.streamingChatModel = streamingChatModel;
     }
 
-    public LLMResponse answerQuestion(String question, com.sakh.entity.User user) {
-        // Retrieve relevant chunks
-        List<Chunk> chunks = retrieverService.retrieve(question, user, 5);
+    public Flux<String> streamAnswer(Prompt prompt) {
+        return streamingChatModel.stream(prompt)
+                .map(response -> {
+                    if (response.getResult() != null
+                            && response.getResult().getOutput() != null
+                            && response.getResult().getOutput().getText() != null) {
+                        return response.getResult().getOutput().getText();
+                    }
+                    return "";
+                })
+                .filter(text -> !text.isEmpty());
+    }
 
-        if (chunks.isEmpty()) {
-            return LLMResponse.builder()
-                    .answer("I couldn't find any relevant documents to answer your question. Please try rephrasing or check if you have access to the relevant documents.")
-                    .citations(List.of())
-                    .build();
+    public String generateAnswer(Prompt prompt) {
+        try {
+            ChatResponse response = chatModel.call(prompt);
+            String text = response.getResult().getOutput().getText();
+            if (text == null || text.isBlank()) {
+                throw new AiServiceException("AI service returned an empty response.");
+            }
+            return text;
+        } catch (AiServiceException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().contains("timed out")) {
+                throw new AiServiceException("AI service timed out. Please try again.", e);
+            }
+            if (e.getMessage() != null && e.getMessage().toLowerCase().contains("rate")) {
+                throw new AiServiceException("AI service rate limit exceeded. Please wait and try again.", e);
+            }
+            throw new AiServiceException("AI service is currently unavailable.", e);
         }
-
-        // Build context from chunks
-        String context = chunks.stream()
-                .map(c -> "Document: " + c.getDocument().getTitle() + "\nContent: " + c.getChunkText())
-                .collect(Collectors.joining("\n\n---\n\n"));
-
-        // Build prompt
-        String prompt = "Question: " + question + "\n\nContext:\n" + context;
-
-        // Generate answer
-        String answer = llmProvider.generate(prompt, SYSTEM_PROMPT);
-
-        return LLMResponse.from(answer, chunks);
     }
 }

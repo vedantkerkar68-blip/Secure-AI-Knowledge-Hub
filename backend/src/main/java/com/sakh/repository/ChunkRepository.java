@@ -8,16 +8,19 @@ import java.util.List;
 
 public interface ChunkRepository extends JpaRepository<Chunk, Long> {
 
-    List<Chunk> findByDocumentIdOrderByChunkIndex(Long documentId);
-
     void deleteByDocumentId(Long documentId);
 
     @Query(value = """
-        SELECT c.* FROM chunks c 
-        WHERE c.document_id = :documentId 
-        AND to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
-        ORDER BY ts_rank_cd(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query)) DESC
+        SELECT c.id, c.document_id, c.chunk_index, c.chunk_text, c.page_number, c.section_title,
+               d.department_id, u.email,
+               ts_rank_cd(to_tsvector('english', c.chunk_text), plainto_tsquery('english', :query))
+        FROM chunks c
+        JOIN documents d ON c.document_id = d.id
+        JOIN users u ON d.uploaded_by = u.id
+        WHERE to_tsvector('english', c.chunk_text) @@ plainto_tsquery('english', :query)
+        AND d.status = 'READY'
+        ORDER BY 9 DESC
         LIMIT :limit
         """, nativeQuery = true)
-    List<Chunk> findByKeywordSearch(Long documentId, String query, int limit);
+    List<Object[]> findKeywordSearchGlobal(String query, int limit);
 }

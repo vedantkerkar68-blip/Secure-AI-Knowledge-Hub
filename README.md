@@ -1,95 +1,478 @@
 # Secure AI Knowledge Hub (SAKH)
 
+A full-stack enterprise knowledge management platform that enables organizations to securely store, process, search, and retrieve internal documents using Retrieval-Augmented Generation (RAG) with Role-Based Access Control (RBAC).
+
 ## Overview
 
-Secure AI Knowledge Hub (SAKH) is a full-stack AI-powered knowledge management system that enables organizations to securely store, retrieve, and interact with internal documents using Retrieval-Augmented Generation (RAG).
+SAKH allows organizations to upload internal documents (PDF, DOCX, TXT) into a centralized knowledge repository. The system automatically extracts text, generates embeddings, and indexes content for semantic search. Users can ask natural language questions and receive AI-generated answers with citations sourced exclusively from documents they are authorized to access.
 
-The platform ensures that users receive answers only from documents they are authorized to access through Role-Based Access Control (RBAC).
+The platform enforces permissions at every layer: authentication, API access, document retrieval, and answer generation. No information from a restricted document is ever included in an AI response.
 
-This project demonstrates modern software engineering concepts including:
+## Architecture
 
-* Java Spring Boot Backend
-* React + TypeScript Frontend
-* PostgreSQL Database
-* JWT Authentication
-* Role-Based Access Control (RBAC)
-* Retrieval-Augmented Generation (RAG)
-* Automatic Document Processing
-* Embedding-based Semantic Search
-* Docker Deployment
+```
+                              +-----------------+
+                              |   React + TS    |
+                              |   Frontend      |
+                              +--------+--------+
+                                       |
+                                  JWT Auth
+                                       |
+                              +--------v--------+
+                              |  Spring Boot    |
+                              |  REST API       |
+                              +--------+--------+
+                                       |
+                    +------------------+------------------+
+                    |                                     |
+            +-------v-------+                    +--------v--------+
+            | Spring         |                    |  RAG Pipeline   |
+            | Security (JWT) |                    |  - Query Rewrite|
+            +---------------+                    |  - Multi-Query  |
+                                                  |  - Retrieval    |
+            +-------v-------+                    |  - Verification |
+            | Business       |                    |  - LLM Response |
+            | Services       |                    +--------+--------+
+            +-------+-------+                             |
+                    |                                      |
+            +-------v-------+                    +--------v--------+
+            | Spring Data   |                    |  Spring AI      |
+            | JPA / Flyway  |                    |  (Gemini)       |
+            +-------+-------+                    +--------+--------+
+                    |                                      |
+                    +------------------+------------------+
+                                       |
+                            +----------v----------+
+                            |   PostgreSQL 17     |
+                            |   + pgvector 0.8    |
+                            +---------------------+
+```
 
----
+### Request Flow
 
-## Project Goals
+```
+User Request
+     |
+     v
+JWT Authentication Filter
+     |
+     v
+Controller (validates input)
+     |
+     v
+Service Layer (business logic, RBAC check)
+     |
+     v
+Repository Layer (data access)
+     |
+     v
+Database
+```
 
-* Secure document management
-* AI-powered enterprise search
-* Permission-aware question answering
-* Automatic document processing
-* Clean and modular architecture
+### RAG Pipeline Flow
 
----
+```
+User Question
+     |
+     v
+Prompt Security Filter (injection detection)
+     |
+     v
+Query Rewriter (ChatModel - Gemini)
+     |
+     v
+Multi-Query Retriever (3 paraphrased queries)
+     |
+     v
+Permission Filter (RBAC on metadata)
+     |
+     v
+Vector Search (pgvector - cosine similarity)
+     |
+     v
+Result Merge / Dedup / Rank
+     |
+     v
+Context Assembly + Prompt Building
+     |
+     v
+LLM Answer Generation (StreamingChatModel)
+     |
+     v
+Answer Verifier (hallucination detection)
+     |
+     v
+Response with Citations + Confidence
+```
 
 ## Technology Stack
 
-### Frontend
-
-* React
-* TypeScript
-* Material UI
-* Axios
-
 ### Backend
 
-* Java 21
-* Spring Boot
-* Spring Security
-* Spring Data JPA
-* Maven
+| Technology | Version |
+| --- | --- |
+| Java | 21 |
+| Spring Boot | 3.5.16 |
+| Spring AI | 1.1.8 |
+| Spring Security | 6.x |
+| Spring Data JPA | 3.x |
+| Hibernate | 6.6 |
+| PostgreSQL | 17 |
+| Flyway | 10.x |
+| JJWT | 0.12.6 |
+| Apache PDFBox | 3.0.4 |
+| Apache POI | 5.3.0 |
+| SpringDoc OpenAPI | 2.8.5 |
 
-### Database
+### Frontend
 
-* PostgreSQL
-* pgvector
+| Technology | Version |
+| --- | --- |
+| React | 18.x |
+| TypeScript | 5.x |
+| Material UI | 5.x |
+| Axios | 1.x |
+| React Router | 6.x |
 
 ### AI
 
-* API-based LLM
-* API-based Embedding Model
+| Technology | Purpose |
+| --- | --- |
+| Google Gemini (via Spring AI) | Chat completions, streaming, query rewriting, title/summary generation |
+| Google Gemini Embedding | Document embedding generation |
+| Spring AI PgVectorStore | Vector storage and similarity search |
+| pgvector 0.8 | PostgreSQL vector extension |
 
-### Deployment
+## Features
 
-* Docker
-* Docker Compose
+### Authentication and Authorization
+- JWT-based authentication with access and refresh token flow
+- Four role levels: ADMIN, MANAGER, EMPLOYEE, GUEST
+- Role-Based Access Control at endpoint and document level
+- BCrypt password hashing
 
----
+### Document Management
+- Upload PDF, DOCX, and TXT files
+- Automatic text extraction via Apache PDFBox and Apache POI
+- Metadata extraction (author, language, summary, page count, tags)
+- Document reprocessing pipeline
+- Chunking with configurable overlap
+- Search documents by keyword with pagination
+- Document preview with metadata summary
 
-## Repository Structure
+### RAG Pipeline
+- **Prompt Security Service:** 11 regex patterns blocking prompt injection (ignore instructions, reveal prompt, jailbreak, DAN mode)
+- **Query Rewriter:** Expands user questions for better retrieval using ChatModel (Gemini)
+- **Multi-Query Retriever:** Generates 3 paraphrased queries, retrieves chunks for each, merges by chunk ID keeping highest score, returns top K
+- **Vector Search:** Cosine similarity search via pgvector with RBAC metadata filtering
+- **Hybrid Context:** Full conversation history with automatic summarization every 20 messages
+- **Answer Generation:** Streaming support via SSE (Server-Sent Events)
+- **Hallucination Verification:** Sentence-level word overlap check against source chunks (30% threshold)
+- **Title Generation:** Auto-generates chat session titles from first user question
 
-backend/
+### Responsive UI / API
+- All endpoints documented via OpenAPI 3.0 / Swagger UI
+- Standardized API error responses with field-level validation errors
+- Pagination, sorting, and filtering on list endpoints
 
-frontend/
+### Admin
+- Dashboard with aggregate counts (users, departments, documents, chat sessions, messages, vector store entries)
+- Activity log with paginated audit trail (LOGIN, UPLOAD, DOWNLOAD, DELETE, REPROCESS, CHAT)
+- RAG evaluation metrics (recall, precision, average similarity, average response time, hallucination rate)
 
-docs/
+### Security
+- All secrets and credentials via environment variables
+- X-Forwarded-For header support for client IP resolution in audit logs
+- Password hashing with BCrypt
 
-knowledge/
+## Project Structure
 
-docker/
+```
+Secure-AI-Knowledge-Hub/
+|
++-- backend/
+|   +-- src/
+|   |   +-- main/java/com/sakh/
+|   |   |   +-- ai/                  # AI service abstractions
+|   |   |   +-- config/              # Swagger, app configuration
+|   |   |   +-- controller/          # REST controllers
+|   |   |   +-- dto/                 # Data transfer objects
+|   |   |   +-- entity/              # JPA entities
+|   |   |   +-- enums/               # Role, activity type enums
+|   |   |   +-- exception/           # Global exception handler, custom exceptions
+|   |   |   +-- knowledge/           # Knowledge processing utilities
+|   |   |   +-- llm/                 # LLM service abstraction
+|   |   |   +-- processing/          # Document processing pipeline
+|   |   |   +-- rag/                 # RAG pipeline components
+|   |   |   |   +-- AnswerVerifier.java
+|   |   |   |   +-- ConversationSummarizer.java
+|   |   |   |   +-- MultiQueryRetriever.java
+|   |   |   |   +-- PromptBuilder.java
+|   |   |   |   +-- QueryRewriter.java
+|   |   |   |   +-- RetrieverService.java
+|   |   |   |   +-- TitleGenerator.java
+|   |   |   +-- repository/          # JPA repositories
+|   |   |   +-- security/            # JWT filter, security config, user details
+|   |   |   +-- service/             # Business logic services
+|   |   |   +-- storage/             # File storage abstraction
+|   |   |   +-- util/                # Utility classes
+|   |   |   +-- validation/          # Custom validators
+|   |   +-- main/resources/
+|   |   |   +-- db/migration/        # Flyway migrations (V1-V5)
+|   |   |   +-- application.yml
+|   |   |   +-- application-dev.yml
+|   |   +-- test/
+|   +-- pom.xml
+|
++-- frontend/                        # React + TypeScript application
+|
++-- docker/                          # Docker Compose configuration
++-- docs/                            # Project documentation
+|   +-- architecture/
+|   +-- contracts/
+|   +-- vision/
++-- knowledge/                       # Sample knowledge documents
++-- scripts/                         # Utility scripts
++-- prompts/                         # LLM prompt templates
++-- storage/                         # Uploaded file storage
+|
++-- AGENTS.md                        # AI agent development rules
++-- LICENSE                          # MIT License
+```
 
-scripts/
+## Database
 
-prompts/
+The system uses PostgreSQL 17 with pgvector for vector similarity search. Schema migrations are managed by Flyway.
 
----
+### Tables
 
-## Development Status
+| Table | Purpose |
+| --- | --- |
+| `roles` | System roles (ADMIN, MANAGER, EMPLOYEE, GUEST) |
+| `departments` | Organization departments |
+| `users` | Application users with BCrypt-hashed passwords |
+| `documents` | Uploaded document records with status tracking |
+| `document_metadata` | Extracted metadata (summary, author, tags, language, page count) |
+| `chunks` | Document text chunks with vector embeddings |
+| `chat_sessions` | User conversation sessions |
+| `chat_messages` | Individual messages with citations and confidence scores |
+| `activity_logs` | Audit trail for security events |
+| `vector_store` | PgVectorStore-managed embedding table |
 
-Current Phase:
+### Migrations
 
-Planning & System Design
+| Migration | Description |
+| --- | --- |
+| V1 | Initial schema: roles, departments, users, documents, document_metadata, chunks, chat_sessions, chat_messages |
+| V2 | Add versioning columns and pgvector extension |
+| V3 | Remove embedding columns (migrated to vector_store) |
+| V4 | Add summary field to chat_sessions |
+| V5 | Create activity_logs table |
 
----
+## Spring AI Integration
+
+Spring AI provides the abstraction layer for AI model interactions, eliminating direct API dependencies.
+
+### Models Used
+
+- **ChatModel (Gemini):** Query rewriting, title generation, conversation summarization
+- **StreamingChatModel (Gemini):** Token-by-token streaming answer generation
+- **EmbeddingModel (Gemini):** Document embedding generation for vector search
+- **PgVectorStore:** Vector storage with metadata filtering for RBAC
+
+### Vector Store Filter Syntax
+
+Metadata filters for RBAC use Spring AI vector store filter expressions:
+
+- Equality: `departmentId == 1`
+- Inequality: `uploadedBy != 'user@email.com'`
+- Email strings require single quotes: `uploadedBy == 'admin@sakh.com'`
+- Logical AND: `departmentId == 1 AND uploadedBy == 'admin@sakh.com'`
+- Logical OR: `departmentId == 1 OR uploadedBy == 'admin@sakh.com'`
+
+## PgVector
+
+The vector store uses the `pgvector` PostgreSQL extension for efficient approximate nearest neighbor search. Key details:
+
+- Vector dimension: 768 (Google Gemini Embedding)
+- Index: IVFFlat with cosine distance
+- Query: cosine similarity search with metadata filtering
+- Table: `vector_store` (managed by Spring AI PgVectorStore)
+
+## RAG Pipeline Detail
+
+### 1. Prompt Security
+All user input is scanned against 11 regex patterns before any processing. Detected injection attempts are logged and blocked with a 400 response.
+
+### 2. Query Rewriting
+The raw user question is sent to Gemini ChatModel for expansion into a more specific search query. On failure, the original query is used.
+
+### 3. Multi-Query Retrieval
+The rewritten query is expanded into 3 paraphrased variants. Each variant is independently searched against the vector store. Results are merged by `chunkId`, keeping the highest similarity score, then sorted descending and truncated to top K.
+
+### 4. Permission Filtering
+Every vector search includes metadata filters (`departmentId`, `uploadedBy`) derived from the authenticated user's role and department. ADMIN users bypass document-level filtering.
+
+### 5. Context Assembly
+Retrieved chunks are assembled with conversation history. If the session has more than 20 messages, a summary replaces earlier messages to fit context windows.
+
+### 6. Answer Generation
+The assembled prompt is sent to Gemini via StreamingChatModel for real-time streaming or via ChatModel for standard responses.
+
+### 7. Answer Verification
+The generated answer is split into sentences. Each sentence is checked against source chunks using word overlap. Sentences with less than 30% word overlap with any source chunk are removed. The response includes the verified text and metadata about removed content.
+
+### 8. Activity Logging
+Every chat interaction is recorded in the activity log with user identity, timestamp, and client IP.
+
+## Installation
+
+### Prerequisites
+
+- JDK 21
+- Maven 3.9+
+- PostgreSQL 17 with pgvector 0.8
+- Node.js 18+ (for frontend)
+- Google Gemini API key
+
+### Environment Variables
+
+Copy `backend/.env.example` to `backend/.env` and fill in the values:
+
+```
+cp backend/.env.example backend/.env
+```
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `GEMINI_API_KEY` | Yes | -- | Google Gemini API key. Obtain from https://aistudio.google.com/app/apikey |
+| `JWT_SECRET` | No | auto-generated | Base64-encoded JWT signing secret. Generate with `openssl rand -base64 64`. Minimum 256-bit. |
+| `DB_HOST` | No | `localhost` | PostgreSQL host address |
+| `DB_PORT` | No | `5432` | PostgreSQL port |
+| `DB_NAME` | No | `sakh_db` | PostgreSQL database name |
+| `DB_USERNAME` | No | `postgres` | PostgreSQL database user |
+| `DB_PASSWORD` | No | `postgres` | PostgreSQL database user password |
+
+### Run Locally
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/your-org/Secure-AI-Knowledge-Hub.git
+   cd Secure-AI-Knowledge-Hub
+   ```
+
+2. Set up PostgreSQL database:
+   ```sql
+   CREATE DATABASE sakh_db;
+   CREATE EXTENSION IF NOT EXISTS vector;
+   ```
+
+3. Configure environment variables:
+   ```
+   cp backend/.env.example backend/.env
+   ```
+   Then edit `backend/.env` with your Gemini API key and database credentials.
+
+4. Build and run the backend:
+   ```
+   cd backend
+   mvn clean install -DskipTests
+   mvn spring-boot:run
+   ```
+
+5. (Optional) Run the frontend:
+   ```
+   cd frontend
+   npm install
+   npm start
+   ```
+
+### Swagger UI
+
+Once the backend is running, access the API documentation at:
+
+```
+http://localhost:8080/swagger-ui.html
+```
+
+OpenAPI JSON specification:
+
+```
+http://localhost:8080/v3/api-docs
+```
+
+### Docker Deployment
+
+```
+docker-compose -f docker/docker-compose.yml up -d
+```
+
+## Screenshots
+
+![Login Page](docs/screenshots/login.png)
+![Dashboard](docs/screenshots/dashboard.png)
+![Chat Interface](docs/screenshots/chat.png)
+![Swagger UI](docs/screenshots/swagger.png)
+
+## API Error Response Format
+
+All API errors follow a consistent structure:
+
+```json
+{
+  "timestamp": "2026-07-15T10:30:00Z",
+  "status": 400,
+  "error": "Bad Request",
+  "message": "Validation failed.",
+  "path": "/api/auth/register",
+  "fields": [
+    { "field": "email", "message": "must be a well-formed email address" },
+    { "field": "password", "message": "must be at least 8 characters" }
+  ]
+}
+```
+
+Standard status codes:
+
+| Code | Usage |
+| --- | --- |
+| 400 | Validation failure or illegal argument |
+| 401 | Authentication failure |
+| 403 | Access denied |
+| 404 | Resource not found |
+| 409 | Duplicate resource |
+| 502 | AI service unavailable |
+| 500 | Internal server error |
+
+## Testing
+
+The project includes 43+ unit and integration tests covering:
+
+- RAG pipeline components (QueryRewriter, MultiQueryRetriever, AnswerVerifier, ConversationSummarizer, TitleGenerator)
+- Prompt security injection detection (20 parameterized test cases)
+- Metrics collection
+- Chat integration with full pipeline
+
+Run tests:
+
+```
+cd backend
+mvn test
+```
+
+## Future Improvements
+
+- Local LLM support (Ollama, Llama)
+- OCR for scanned documents
+- SharePoint and Confluence integration
+- Multi-language document support
+- Knowledge graph integration
+- Advanced analytics dashboard with charts
+- WebSocket-based real-time notifications
+- Document version diff viewer
+- Batch document import
+- Scheduled document re-indexing
 
 ## License
 
-MIT License
+MIT License. See [LICENSE](LICENSE) for details.

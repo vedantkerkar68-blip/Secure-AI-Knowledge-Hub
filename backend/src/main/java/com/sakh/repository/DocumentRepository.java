@@ -21,13 +21,18 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     List<Document> findByGroupIdOrderByVersionDesc(Long groupId);
 
-    Document findByGroupIdAndVersion(Long groupId, Integer version);
-
-    Document findByGroupIdAndIsLatestTrue(Long groupId);
-
-    boolean existsByOriginalFilenameAndGroupId(String originalFilename, Long groupId);
-
     Optional<Document> findByOriginalFilenameAndDepartmentIdAndIsLatestTrue(String originalFilename, Long departmentId);
 
-    List<Document> findByDepartmentIdAndStatus(Long departmentId, DocumentStatus status);
+    long countByStatus(DocumentStatus status);
+
+    @Query("SELECT d FROM Document d LEFT JOIN DocumentMetadata dm ON dm.document = d WHERE " +
+            "d.isLatest = true AND " +
+            "(?1 IS NULL OR " +
+            "  LOWER(d.title) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
+            "  LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
+            "  LOWER(dm.summary) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
+            "  LOWER(dm.author) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
+            "  LOWER(dm.language) LIKE LOWER(CONCAT('%', ?1, '%'))) AND " +
+            "(?2 IS NULL OR d.department.name = ?2)")
+    Page<Document> searchByKeyword(String query, String department, Pageable pageable);
 }

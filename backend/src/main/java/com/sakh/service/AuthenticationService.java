@@ -6,6 +6,7 @@ import com.sakh.dto.auth.RegisterRequest;
 import com.sakh.entity.Department;
 import com.sakh.entity.Role;
 import com.sakh.entity.User;
+import com.sakh.enums.ActivityType;
 import com.sakh.enums.UserStatus;
 import com.sakh.exception.DuplicateResourceException;
 import com.sakh.exception.ResourceNotFoundException;
@@ -29,18 +30,21 @@ public class AuthenticationService {
     private final DepartmentRepository departmentRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final ActivityLogService activityLogService;
 
     public AuthenticationService(
             UserRepository userRepository,
             RoleRepository roleRepository,
             DepartmentRepository departmentRepository,
             PasswordEncoder passwordEncoder,
-            JwtService jwtService) {
+            JwtService jwtService,
+            ActivityLogService activityLogService) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.departmentRepository = departmentRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.activityLogService = activityLogService;
     }
 
     public AuthResponse register(RegisterRequest request) {
@@ -85,6 +89,9 @@ public class AuthenticationService {
         }
 
         String token = jwtService.generateToken(toUserDetails(user));
+
+        activityLogService.log(user, ActivityType.LOGIN, null);
+
         return new AuthResponse(token, "Bearer", 86400000);
     }
 

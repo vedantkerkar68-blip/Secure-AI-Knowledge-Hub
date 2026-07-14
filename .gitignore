@@ -1,57 +1,59 @@
 # Java
-
 target/
 *.class
 *.jar
 *.war
+hs_err_pid*.log
+replay_pid*.log
 
 # Maven
-
 .mvn/
 .settings/
 
 # IntelliJ
-
 .idea/
 *.iml
 
 # VS Code
-
 .vscode/
 
 # Node
-
 node_modules/
 
 # React
-
 build/
 dist/
 
 # Logs
-
 logs/
 *.log
 
 # Environment
-
 .env
-.env.*
+.env.local
+.env.prod
+.env.development
+!.env.example
 
 # OS
-
 .DS_Store
 Thumbs.db
 
 # Docker
-
 docker-data/
+*.merge-conflict
 
 # PostgreSQL
-
 postgres-data/
 
 # Temporary Files
-
 tmp/
 temp/
+
+# Backend uploads
+storage/
+
+# IDE
+*.swp
+*.swo
+*~

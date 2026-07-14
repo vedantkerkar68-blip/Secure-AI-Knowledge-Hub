@@ -27,6 +27,9 @@ public class ChatSession {
     @Column(name = "title", length = 255)
     private String title;
 
+    @Column(name = "summary", columnDefinition = "TEXT")
+    private String summary;
+
     @Column(name = "created_at")
     private Instant createdAt;
 

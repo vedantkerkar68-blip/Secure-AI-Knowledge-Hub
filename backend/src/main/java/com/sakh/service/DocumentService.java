@@ -1,6 +1,7 @@
 package com.sakh.service;
 
 import com.sakh.dto.document.DocumentListResponse;
+import com.sakh.dto.document.DocumentPreviewResponse;
 import com.sakh.dto.document.DocumentResponse;
 import com.sakh.dto.document.DocumentVersionResponse;
 import com.sakh.dto.document.UploadDocumentResponse;
@@ -8,11 +9,14 @@ import com.sakh.dto.document.UpdateDocumentStatusRequest;
 import com.sakh.dto.document.UpdateDocumentStatusResponse;
 import com.sakh.entity.Department;
 import com.sakh.entity.Document;
+import com.sakh.entity.DocumentMetadata;
 import com.sakh.entity.User;
+import com.sakh.enums.ActivityType;
 import com.sakh.enums.DocumentStatus;
 import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.processing.DocumentProcessingService;
 import com.sakh.repository.DepartmentRepository;
+import com.sakh.repository.DocumentMetadataRepository;
 import com.sakh.repository.DocumentRepository;
 import com.sakh.repository.UserRepository;
 import com.sakh.storage.StorageService;
@@ -31,21 +35,27 @@ import java.util.List;
 public class DocumentService {
 
     private final DocumentRepository documentRepository;
+    private final DocumentMetadataRepository documentMetadataRepository;
     private final DepartmentRepository departmentRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
     private final DocumentProcessingService processingService;
+    private final ActivityLogService activityLogService;
 
     public DocumentService(DocumentRepository documentRepository,
+                           DocumentMetadataRepository documentMetadataRepository,
                            DepartmentRepository departmentRepository,
                            UserRepository userRepository,
                            StorageService storageService,
-                           DocumentProcessingService processingService) {
+                           DocumentProcessingService processingService,
+                           ActivityLogService activityLogService) {
         this.documentRepository = documentRepository;
+        this.documentMetadataRepository = documentMetadataRepository;
         this.departmentRepository = departmentRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
         this.processingService = processingService;
+        this.activityLogService = activityLogService;
     }
 
     public UploadDocumentResponse uploadDocument(MultipartFile file, Long departmentId) {
@@ -101,6 +111,9 @@ public class DocumentService {
 
         Document saved = documentRepository.save(document);
 
+        activityLogService.log(currentUser, ActivityType.UPLOAD,
+                "Document: " + saved.getId() + " - " + saved.getTitle());
+
         // Trigger async processing
         processingService.processDocument(saved.getId());
 
@@ -125,6 +138,41 @@ public class DocumentService {
         }
         
         Page<Document> documents = documentRepository.findWithFilters(search, department, status, pageable);
+        return documents.map(this::toListResponse);
+    }
+
+    public DocumentPreviewResponse getDocumentPreview(Long id) {
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
+
+        checkDocumentAccess(document);
+
+        DocumentMetadata metadata = documentMetadataRepository.findByDocumentId(id);
+
+        return DocumentPreviewResponse.builder()
+                .title(document.getTitle())
+                .summary(metadata != null ? metadata.getSummary() : null)
+                .language(metadata != null ? metadata.getLanguage() : null)
+                .pageCount(metadata != null ? metadata.getPageCount() : null)
+                .author(metadata != null ? metadata.getAuthor() : null)
+                .tags(metadata != null ? metadata.getTags() : null)
+                .version(metadata != null ? metadata.getVersion() : null)
+                .department(document.getDepartment() != null ? document.getDepartment().getName() : null)
+                .uploadedBy(document.getUploadedBy() != null ? document.getUploadedBy().getEmail() : null)
+                .createdAt(document.getCreatedAt())
+                .build();
+    }
+
+    public Page<DocumentListResponse> searchDocuments(String query, Pageable pageable) {
+        User currentUser = getCurrentUser();
+        String userRole = getCurrentUserRole();
+        String department = null;
+
+        if (("MANAGER".equals(userRole) || "EMPLOYEE".equals(userRole)) && currentUser.getDepartment() != null) {
+            department = currentUser.getDepartment().getName();
+        }
+
+        Page<Document> documents = documentRepository.searchByKeyword(query, department, pageable);
         return documents.map(this::toListResponse);
     }
 
@@ -184,9 +232,12 @@ public class DocumentService {
         document.setUpdatedAt(Instant.now());
         documentRepository.save(document);
         
+        activityLogService.log(getCurrentUser(), ActivityType.REPROCESS,
+                "Document: " + document.getId() + " - " + document.getTitle());
+
         // Trigger async processing
         processingService.processDocument(document.getId());
-        
+
         return UploadDocumentResponse.builder()
                 .id(document.getId())
                 .title(document.getTitle())
@@ -215,7 +266,10 @@ public class DocumentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
         
         checkDocumentAccess(document);
-        
+
+        activityLogService.log(getCurrentUser(), ActivityType.DOWNLOAD,
+                "Document: " + document.getId() + " - " + document.getTitle());
+
         return storageService.load(document.getStoragePath());
     }
 

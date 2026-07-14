@@ -5,6 +5,8 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.Instant;
 
@@ -31,6 +33,7 @@ public class ChatMessage {
     @Column(name = "message", columnDefinition = "TEXT", nullable = false)
     private String message;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "citations", columnDefinition = "JSONB")
     private String citations;
 
