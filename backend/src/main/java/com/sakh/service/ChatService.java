@@ -1,6 +1,7 @@
 package com.sakh.service;
 
 import com.sakh.dto.chat.ChatResponse;
+import com.sakh.dto.chat.ChatSessionResponse;
 import com.sakh.dto.chat.CitationDTO;
 import com.sakh.entity.ChatMessage;
 import com.sakh.entity.ChatSession;
@@ -93,6 +94,17 @@ public class ChatService {
         session.setTitle(title != null ? title : "New Chat");
         session.setCreatedAt(Instant.now());
         return sessionRepository.save(session);
+    }
+
+    @Transactional
+    public ChatSessionResponse createSession(String title) {
+        User user = getCurrentUser();
+        ChatSession session = createSession(user, title);
+        return ChatSessionResponse.builder()
+                .id(session.getId())
+                .title(session.getTitle())
+                .createdAt(session.getCreatedAt())
+                .build();
     }
 
     @Transactional

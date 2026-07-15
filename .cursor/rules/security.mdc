@@ -1,9 +1,0 @@
-Always verify JWT.
-
-Always use BCrypt.
-
-Never store passwords.
-
-Never bypass RBAC.
-
-Validate every request.

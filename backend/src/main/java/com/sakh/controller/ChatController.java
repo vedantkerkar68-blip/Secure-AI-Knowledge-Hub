@@ -2,6 +2,8 @@ package com.sakh.controller;
 
 import com.sakh.dto.chat.ChatRequest;
 import com.sakh.dto.chat.ChatResponse;
+import com.sakh.dto.chat.ChatSessionRequest;
+import com.sakh.dto.chat.ChatSessionResponse;
 import com.sakh.service.ChatService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -26,6 +28,13 @@ public class ChatController {
 
     public ChatController(ChatService chatService) {
         this.chatService = chatService;
+    }
+
+    @PostMapping("/sessions")
+    @PreAuthorize("isAuthenticated()")
+    @Operation(summary = "Create chat session", description = "Creates a new chat session for the authenticated user")
+    public ResponseEntity<ChatSessionResponse> createSession(@RequestBody ChatSessionRequest request) {
+        return ResponseEntity.ok(chatService.createSession(request.getTitle()));
     }
 
     @PostMapping

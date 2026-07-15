@@ -57,8 +57,12 @@ public class DashboardService {
     }
 
     private long countVectorDocuments() {
-        var query = entityManager.createNativeQuery("SELECT COUNT(*) FROM vector_store");
-        Number result = (Number) query.getSingleResult();
-        return result != null ? result.longValue() : 0L;
+        try {
+            var query = entityManager.createNativeQuery("SELECT COUNT(*) FROM vector_store");
+            Number result = (Number) query.getSingleResult();
+            return result != null ? result.longValue() : 0L;
+        } catch (Exception e) {
+            return 0L;
+        }
     }
 }

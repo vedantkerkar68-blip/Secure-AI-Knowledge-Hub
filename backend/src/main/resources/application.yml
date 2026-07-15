@@ -17,6 +17,8 @@ spring:
   profiles:
     active: dev
 
+  mvc:
+    throw-exception-if-no-handler-found: true
   jackson:
     serialization:
       indent-output: true

@@ -26,6 +26,7 @@ public class ChunkService {
     @Transactional
     public List<Chunk> chunkDocument(Document document, String text) {
         chunkRepository.deleteByDocumentId(document.getId());
+        chunkRepository.flush();
 
         List<String> sentences = splitIntoSentences(text);
         List<String> chunks = mergeIntoChunks(sentences);

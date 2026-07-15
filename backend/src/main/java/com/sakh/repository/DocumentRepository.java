@@ -32,7 +32,8 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             "  LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
             "  LOWER(dm.summary) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
             "  LOWER(dm.author) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
-            "  LOWER(dm.language) LIKE LOWER(CONCAT('%', ?1, '%'))) AND " +
+            "  LOWER(dm.language) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
+            "  EXISTS (SELECT 1 FROM Chunk c WHERE c.document.id = d.id AND LOWER(c.chunkText) LIKE LOWER(CONCAT('%', ?1, '%')))) AND " +
             "(?2 IS NULL OR d.department.name = ?2)")
     Page<Document> searchByKeyword(String query, String department, Pageable pageable);
 }
