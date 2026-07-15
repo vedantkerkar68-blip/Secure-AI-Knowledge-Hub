@@ -1,0 +1,7 @@
+﻿Employee Leave Policy
+
+All employees are entitled to 20 days of paid annual leave per year. 
+Leave requests must be approved by the department manager at least 5 working days in advance.
+Sick leave requires a medical certificate for absences exceeding 3 consecutive days.
+Parental leave of 12 weeks is available for new parents.
+Unused leave cannot be carried forward beyond March 31st of each year.

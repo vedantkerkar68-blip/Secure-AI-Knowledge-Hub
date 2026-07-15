@@ -50,8 +50,19 @@ postgres-data/
 tmp/
 temp/
 
-# Backend uploads
-storage/
+# Cursor IDE
+.cursor/
+
+# AI agent files
+AGENTS.md
+pgvector_bytecode.txt
+
+# Backend uploads (runtime data, not source)
+backend/storage/uploads/*
+!backend/storage/uploads/.gitkeep
+
+# Specification docs (removed from git; keep only README.md + docs/architecture/ARCHITECTURE.md)
+docs/
 
 # IDE
 *.swp
