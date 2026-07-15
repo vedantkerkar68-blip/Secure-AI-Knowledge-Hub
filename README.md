@@ -12,7 +12,7 @@ The platform enforces permissions at every layer: authentication, API access, do
 
 ```
                               +-----------------+
-                              |   React + TS    |
+                              |   React    |
                               |   Frontend      |
                               +--------+--------+
                                        |
