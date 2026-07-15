@@ -128,11 +128,15 @@ Response with Citations + Confidence
 
 | Technology | Version |
 | --- | --- |
-| React | 18.x |
-| TypeScript | 5.x |
-| Material UI | 5.x |
+| React | 19.x |
+| JavaScript (ES2022) | — |
+| Material UI | 6.x |
 | Axios | 1.x |
-| React Router | 6.x |
+| React Router | 7.x |
+| Vite | 6.x |
+| React Hook Form | 7.x |
+| React Markdown | 10.x |
+| React Toastify | 11.x |
 
 ### AI
 
@@ -170,7 +174,17 @@ Response with Citations + Confidence
 - **Hallucination Verification:** Sentence-level word overlap check against source chunks (30% threshold)
 - **Title Generation:** Auto-generates chat session titles from first user question
 
-### Responsive UI / API
+### Frontend UI
+- Role-based sidebar and dashboard (ADMIN sees all; MANAGER/EMPLOYEE see filtered views)
+- User management with CRUD, role/department/status filters, Enable/Disable toggle
+- Department management with full CRUD and pagination
+- Document management with drag-and-drop upload, progress bar, status polling, download, preview metadata, version history, reprocess
+- AI Chat with Markdown rendering, sources drawer, confidence labels (High/Medium/Low), typing indicator
+- Paginated activity log with search and action-type color coding
+- Profile page with account info, member-since date, and inline editing
+- Responsive MUI design with consistent blue theme
+
+### API
 - All endpoints documented via OpenAPI 3.0 / Swagger UI
 - Standardized API error responses with field-level validation errors
 - Pagination, sorting, and filtering on list endpoints
@@ -224,7 +238,20 @@ Secure-AI-Knowledge-Hub/
 |   |   +-- test/
 |   +-- pom.xml
 |
-+-- frontend/                        # React + TypeScript application
++-- frontend/                        # React + JavaScript application
+|   +-- src/
+|       +-- assets/
+|       +-- common/
+|       +-- components/
+|       |   +-- layout/              # MainLayout, Navbar, Sidebar
+|       +-- context/                 # AuthContext
+|       +-- hooks/
+|       +-- pages/                   # Dashboard, Users, Departments, Documents, Chat, ActivityLogs, Profile, Login, NotFound
+|       +-- routes/                  # AppRoutes with PrivateRoute guard
+|       +-- services/                # Axios-based API services
+|       +-- utils/
+|       +-- App.jsx
+|       +-- theme.js                 # MUI theme configuration
 |
 +-- docker/                          # Docker Compose configuration
 +-- docs/                            # Project documentation
@@ -380,12 +407,14 @@ cp backend/.env.example backend/.env
    mvn spring-boot:run
    ```
 
-5. (Optional) Run the frontend:
+5. Run the frontend:
    ```
    cd frontend
    npm install
-   npm start
+   npm run dev
    ```
+
+   The frontend runs at `http://localhost:5173` and proxies API requests to `http://localhost:8080/api`.
 
 ### Swagger UI
 

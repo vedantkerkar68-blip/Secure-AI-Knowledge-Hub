@@ -18,22 +18,27 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import ChatIcon from '@mui/icons-material/Chat';
 import HistoryIcon from '@mui/icons-material/History';
 import PersonIcon from '@mui/icons-material/Person';
+import { useAuth } from '../../context/AuthContext';
 
 const drawerWidth = 260;
 
-const menuItems = [
-  { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-  { text: 'Users', icon: <PeopleIcon />, path: '/users' },
-  { text: 'Departments', icon: <BusinessIcon />, path: '/departments' },
-  { text: 'Documents', icon: <DescriptionIcon />, path: '/documents' },
-  { text: 'Chat', icon: <ChatIcon />, path: '/chat' },
-  { text: 'Activity Logs', icon: <HistoryIcon />, path: '/activity-logs' },
-  { text: 'Profile', icon: <PersonIcon />, path: '/profile' },
+const allMenuItems = [
+  { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard', roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
+  { text: 'Users', icon: <PeopleIcon />, path: '/users', roles: ['ADMIN'] },
+  { text: 'Departments', icon: <BusinessIcon />, path: '/departments', roles: ['ADMIN'] },
+  { text: 'Documents', icon: <DescriptionIcon />, path: '/documents', roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
+  { text: 'Chat', icon: <ChatIcon />, path: '/chat', roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
+  { text: 'Activity Logs', icon: <HistoryIcon />, path: '/activity-logs', roles: ['ADMIN'] },
+  { text: 'Profile', icon: <PersonIcon />, path: '/profile', roles: ['ADMIN', 'MANAGER', 'EMPLOYEE'] },
 ];
 
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const role = user?.role || '';
+
+  const menuItems = allMenuItems.filter((item) => item.roles.includes(role));
 
   return (
     <Drawer
@@ -83,9 +88,7 @@ export default function Sidebar() {
                 sx={{
                   borderRadius: 2,
                   bgcolor: isActive ? 'rgba(255,255,255,0.15)' : 'transparent',
-                  '&:hover': {
-                    bgcolor: 'rgba(255,255,255,0.10)',
-                  },
+                  '&:hover': { bgcolor: 'rgba(255,255,255,0.10)' },
                 }}
               >
                 <ListItemIcon
