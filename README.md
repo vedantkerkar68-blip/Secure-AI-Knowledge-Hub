@@ -432,9 +432,109 @@ http://localhost:8080/v3/api-docs
 
 ### Docker Deployment
 
+#### Prerequisites
+
+- Docker Desktop (or Docker Engine + Docker Compose)
+- Google Gemini API key
+
+#### Quick Start
+
+1. Set your Gemini API key as an environment variable:
+
+   **Windows (PowerShell):**
+   ```powershell
+   $env:GEMINI_API_KEY="your_gemini_key"
+   ```
+
+   **Linux / macOS:**
+   ```sh
+   export GEMINI_API_KEY=your_gemini_key
+   ```
+
+2. Build and start all services:
+
+   ```sh
+   docker compose build
+   docker compose up -d
+   ```
+
+   This starts:
+   - **PostgreSQL 17** with pgvector on port `5432`
+   - **Backend API** on port `8080`
+   - **Frontend** on port `3000`
+
+3. Access the application:
+
+   | Service | URL |
+   | --- | --- |
+   | Frontend | http://localhost:3000 |
+   | Swagger UI | http://localhost:8080/api/swagger-ui/index.html |
+   | OpenAPI Spec | http://localhost:8080/api/v3/api-docs |
+
+#### Configuration
+
+Create a `.env` file in the project root to customize settings:
+
+```sh
+# Required
+GEMINI_API_KEY=your_gemini_key
+
+# Optional (defaults shown)
+JWT_SECRET=9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p3q2r1s0t9u8v7w6x5y4z321098765432
 ```
-docker-compose -f docker/docker-compose.yml up -d
+
+#### Commands
+
+| Command | Description |
+| --- | --- |
+| `docker compose build` | Build all images |
+| `docker compose up -d` | Start all services in background |
+| `docker compose down` | Stop and remove all containers |
+| `docker compose logs -f` | Follow all service logs |
+| `docker compose logs -f backend` | Follow backend logs only |
+| `docker compose ps` | List running services |
+
+#### Supabase Deployment
+
+To deploy using a Supabase PostgreSQL database instead of the local PostgreSQL container:
+
+```sh
+docker compose -f docker/docker-compose.supabase.yml build
+docker compose -f docker/docker-compose.supabase.yml up -d
 ```
+
+This starts only the **Backend** and **Frontend** services, connecting directly to the Supabase PostgreSQL instance.
+
+#### Volumes
+
+Persistent data is stored in Docker volumes:
+
+- `postgres-data` — database files (local deployment only)
+- `uploads` — uploaded documents
+- `logs` — application logs
+
+## Authentication
+
+This is an internal company application. There is no public registration.
+
+### Fresh Deployment Flow
+
+1. Flyway migrations execute on first startup
+2. Default roles and department are created
+3. Default administrator account is created
+4. Admin logs in with the demo credentials
+5. Admin creates employee accounts through the User Management UI
+6. Employees log in with their created credentials
+
+No public registration is available. Users must be created by an administrator.
+
+### Demo Credentials
+
+| Role | Email | Password |
+| --- | --- | --- |
+| Administrator | `admin@sakh.com` | `Admin@123` |
+
+This account is automatically created on first startup by Flyway migration V7.
 
 ## Screenshots
 
