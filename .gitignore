@@ -61,9 +61,6 @@ pgvector_bytecode.txt
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
 
-# Specification docs (removed from git; keep only README.md + docs/architecture/ARCHITECTURE.md)
-docs/
-
 # IDE
 *.swp
 *.swo
