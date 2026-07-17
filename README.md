@@ -67,44 +67,44 @@ Access control is enforced at every layer: authentication, API endpoints, docume
 
 ```mermaid
 graph TB
-    User([User]) --> Browser[React SPA<br/>Vercel]
+    User(["User"]) --> Browser["React SPA<br/>Vercel"]
 
-    Browser --> API[Spring Boot REST API<br/>Render :8080]
+    Browser --> API["Spring Boot REST API<br/>Render :8080"]
 
-    subgraph Backend [Spring Boot Backend]
-        API --> Security[JWT Filter<br/>SecurityContext]
-        Security --> Auth[Authentication<br/>Controller]
-        Security --> RBAC[Method-Level<br/>@PreAuthorize]
+    subgraph Backend ["Spring Boot Backend"]
+        API --> Security["JWT Filter<br/>SecurityContext"]
+        Security --> Auth["Authentication<br/>Controller"]
+        Security --> RBAC["Method-Level RBAC<br/>@PreAuthorize"]
 
-        Auth --> Services[Application Services]
+        Auth --> Services["Application Services"]
 
-        Services --> DocUpload[Document Upload]
-        Services --> Chat[Chat Service]
-        Services --> RAG[RAG Pipeline]
-        Services --> Activity[Activity Logging]
-        Services --> Dashboard[Dashboard Metrics]
+        Services --> DocUpload["Document Upload"]
+        Services --> Chat["Chat Service"]
+        Services --> RAG["RAG Pipeline"]
+        Services --> Activity["Activity Logging"]
+        Services --> Dashboard["Dashboard Metrics"]
 
-        DocUpload --> Processing[Async Processing<br/>Extract → Chunk → Embed]
-        Processing --> VectorStore[(pgvector<br/>Vector Store)]
+        DocUpload --> Processing["Async Processing<br/>Extract → Chunk → Embed"]
+        Processing --> VectorStore[("pgvector<br/>Vector Store")]
 
-        Chat --> Retriever[Hybrid Retriever<br/>Semantic + Keyword]
+        Chat --> Retriever["Hybrid Retriever<br/>Semantic + Keyword"]
         Retriever --> VectorStore
-        Retriever --> ChunkDB[(Chunks<br/>PostgreSQL)]
+        Retriever --> ChunkDB[("Chunks<br/>PostgreSQL")]
 
-        RAG --> QueryRewrite[Query Rewriter]
-        RAG --> MultiQuery[Multi-Query<br/>Expansion]
-        RAG --> AnswerVerify[Answer Verifier]
-        RAG --> Citation[Citation Builder]
-        RAG --> LLM[Gemini 2.5 Flash]
+        RAG --> QueryRewrite["Query Rewriter"]
+        RAG --> MultiQuery["Multi-Query<br/>Expansion"]
+        RAG --> AnswerVerify["Answer Verifier"]
+        RAG --> Citation["Citation Builder"]
+        RAG --> LLM["Gemini 2.5 Flash"]
     end
 
-    VectorStore --> PG[(Neon PostgreSQL<br/>pgvector)]
+    VectorStore --> PG[("Neon PostgreSQL<br/>pgvector")]
     ChunkDB --> PG
 
-    Services --> PG2[(Neon PostgreSQL<br/>Tables)]
-    PG2 --> Flyway[Flyway Migrations<br/>V1-V7]
+    Services --> PG2[("Neon PostgreSQL<br/>Tables")]
+    PG2 --> Flyway["Flyway Migrations<br/>V1-V7"]
 
-    LLM --> GeminiAPI[Google Gemini API]
+    LLM --> GeminiAPI["Google Gemini API"]
 
     style User fill:#f9f9f9,stroke:#333
     style Browser fill:#e1f5fe,stroke:#0288d1
@@ -119,28 +119,28 @@ graph TB
 
 ```mermaid
 flowchart LR
-    Q[User Question] --> QR[Query Rewriter<br/>Gemini]
-    QR --> MQ[Multi-Query<br/>Expansion x3]
-    MQ --> VS[(Vector Search<br/>pgvector)]
-    MQ --> KW[(Keyword Search<br/>PostgreSQL)]
+    Q["User Question"] --> QR["Query Rewriter<br/>Gemini"]
+    QR --> MQ["Multi-Query<br/>Expansion x3"]
+    MQ --> VS[("Vector Search<br/>pgvector")]
+    MQ --> KW[("Keyword Search<br/>PostgreSQL")]
 
-    VS --> Merge[Merge & Rank<br/>Reciprocal Fusion]
+    VS --> Merge["Merge and Rank<br/>Reciprocal Fusion"]
     KW --> Merge
 
-    Merge --> Filter[Access Control<br/>Filter by Dept/Role]
-    Filter --> PB[Prompt Builder<br/>Context Assembly]
+    Merge --> Filter["Access Control<br/>Filter by Dept/Role"]
+    Filter --> PB["Prompt Builder<br/>Context Assembly"]
 
-    subgraph Documents [Document Ingestion]
-        UP[Upload PDF/DOCX] --> EX[Text Extraction<br/>PDFBox / POI]
-        EX --> CH[Chunking]
-        CH --> EM[Embedding<br/>text-embedding-004]
+    subgraph Documents ["Document Ingestion"]
+        UP["Upload PDF/DOCX"] --> EX["Text Extraction<br/>PDFBox / POI"]
+        EX --> CH["Chunking"]
+        CH --> EM["Embedding<br/>text-embedding-004"]
         EM --> VS
         CH --> KW
     end
 
-    PB --> Gen[Gemini 2.5 Flash]
-    Gen --> AV[Answer Verifier<br/>Sentence Grounding]
-    AV --> Resp[Answer + Citations]
+    PB --> Gen["Gemini 2.5 Flash"]
+    Gen --> AV["Answer Verifier<br/>Sentence Grounding"]
+    AV --> Resp["Answer and Citations"]
 ```
 
 ---
