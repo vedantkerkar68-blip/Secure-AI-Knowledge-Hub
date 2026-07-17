@@ -494,6 +494,17 @@ JWT_SECRET=9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p3q2r1s0t9u8v7w6x5y4z321098765432
 | `docker compose logs -f backend` | Follow backend logs only |
 | `docker compose ps` | List running services |
 
+#### Neon Deployment
+
+To deploy using a Neon PostgreSQL database instead of the local PostgreSQL container:
+
+```sh
+docker compose -f docker/docker-compose.neon.yml build
+docker compose -f docker/docker-compose.neon.yml up -d
+```
+
+This starts only the **Backend** and **Frontend** services, connecting directly to the Neon PostgreSQL instance with `sslmode=require`.
+
 #### Supabase Deployment
 
 To deploy using a Supabase PostgreSQL database instead of the local PostgreSQL container:

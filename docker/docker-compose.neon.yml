@@ -1,0 +1,35 @@
+name: sakh
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://ep-long-haze-azpp3lxk-pooler.c-3.ap-southeast-1.aws.neon.tech:5432/neondb?sslmode=require
+      SPRING_DATASOURCE_USERNAME: neondb_owner
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-npg_M7GruY4DCpeB}
+      JWT_SECRET: ${JWT_SECRET:-9a8b7c6d5e4f3g2h1i0j9k8l7m6n5o4p3q2r1s0t9u8v7w6x5y4z321098765432}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-placeholder}
+    volumes:
+      - uploads:/app/storage/uploads
+      - logs:/app/logs
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8080/api
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  uploads:
+  logs:
