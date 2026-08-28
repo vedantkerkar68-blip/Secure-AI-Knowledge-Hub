@@ -18,6 +18,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmail(String email);
 
+    long countByRoleNameAndStatus(String roleName, UserStatus status);
+
     @Query("SELECT u FROM User u WHERE " +
             "(?1 IS NULL OR u.firstName ILIKE %?1% OR u.lastName ILIKE %?1% OR u.email ILIKE %?1%) AND " +
             "(?2 IS NULL OR u.role.name = ?2) AND " +

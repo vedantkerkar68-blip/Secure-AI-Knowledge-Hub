@@ -1,6 +1,8 @@
 package com.sakh.service;
 
+import com.sakh.dto.chat.ChatMessageResponse;
 import com.sakh.dto.chat.ChatResponse;
+import com.sakh.dto.chat.ChatSessionDetailResponse;
 import com.sakh.dto.chat.ChatSessionResponse;
 import com.sakh.dto.chat.CitationDTO;
 import com.sakh.entity.ChatMessage;
@@ -19,6 +21,8 @@ import com.sakh.repository.ChatMessageRepository;
 import com.sakh.repository.ChatSessionRepository;
 import com.sakh.repository.UserRepository;
 import com.sakh.security.PromptSecurityService;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -58,6 +62,7 @@ public class ChatService {
     private final MetricsCollector metricsCollector;
     private final ActivityLogService activityLogService;
     private final UserRepository userRepository;
+    private final ObjectMapper objectMapper;
 
     public ChatService(ChatSessionRepository sessionRepository,
                        ChatMessageRepository messageRepository,
@@ -71,7 +76,8 @@ public class ChatService {
                        PromptSecurityService promptSecurityService,
                        MetricsCollector metricsCollector,
                        ActivityLogService activityLogService,
-                       UserRepository userRepository) {
+                       UserRepository userRepository,
+                       ObjectMapper objectMapper) {
         this.sessionRepository = sessionRepository;
         this.messageRepository = messageRepository;
         this.retrieverService = retrieverService;
@@ -85,6 +91,7 @@ public class ChatService {
         this.metricsCollector = metricsCollector;
         this.activityLogService = activityLogService;
         this.userRepository = userRepository;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -92,7 +99,9 @@ public class ChatService {
         ChatSession session = new ChatSession();
         session.setUser(user);
         session.setTitle(title != null ? title : "New Chat");
-        session.setCreatedAt(Instant.now());
+        Instant now = Instant.now();
+        session.setCreatedAt(now);
+        session.setUpdatedAt(now);
         return sessionRepository.save(session);
     }
 
@@ -104,11 +113,80 @@ public class ChatService {
                 .id(session.getId())
                 .title(session.getTitle())
                 .createdAt(session.getCreatedAt())
+                .updatedAt(session.getUpdatedAt())
+                .build();
+    }
+
+    @Transactional(readOnly = true)
+    public List<ChatSessionResponse> getSessions() {
+        User user = getCurrentUser();
+        return sessionRepository.findByUserIdOrderByUpdatedAtDesc(user.getId()).stream()
+                .map(s -> ChatSessionResponse.builder()
+                        .id(s.getId())
+                        .title(s.getTitle())
+                        .createdAt(s.getCreatedAt())
+                        .updatedAt(s.getUpdatedAt())
+                        .build())
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public ChatSessionDetailResponse getSessionDetail(Long sessionId) {
+        User currentUser = getCurrentUser();
+        ChatSession session = sessionRepository.findByIdAndUserId(sessionId, currentUser.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Chat session not found: " + sessionId));
+
+        List<ChatMessageResponse> messages = messageRepository
+                .findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
+                .map(this::toMessageResponse)
+                .toList();
+
+        return ChatSessionDetailResponse.builder()
+                .id(session.getId())
+                .title(session.getTitle())
+                .createdAt(session.getCreatedAt())
+                .updatedAt(session.getUpdatedAt())
+                .messages(messages)
                 .build();
     }
 
     @Transactional
+    public void deleteSession(Long sessionId) {
+        User currentUser = getCurrentUser();
+        ChatSession session = sessionRepository.findByIdAndUserId(sessionId, currentUser.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Chat session not found: " + sessionId));
+        sessionRepository.delete(session);
+    }
+
+    private ChatMessageResponse toMessageResponse(ChatMessage message) {
+        return ChatMessageResponse.builder()
+                .id(message.getId())
+                .role(message.getMessageRole())
+                .content(message.getMessage())
+                .citations(parseCitations(message.getCitations()))
+                .confidence(message.getConfidence())
+                .createdAt(message.getCreatedAt())
+                .build();
+    }
+
+    private List<CitationDTO> parseCitations(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<CitationDTO>>() {});
+        } catch (Exception e) {
+            logger.warn("Failed to parse citations: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
     public ChatResponse sendMessage(Long sessionId, String message) {
+        return sendMessage(sessionId, message, null);
+    }
+
+    @Transactional
+    public ChatResponse sendMessage(Long sessionId, String message, Long documentId) {
         if (message == null || message.isBlank()) {
             throw new AiServiceException("Question cannot be empty.");
         }
@@ -135,7 +213,7 @@ public class ChatService {
 
         long startTime = System.currentTimeMillis();
 
-        List<Document> documents = retrieverService.retrieve(message, currentUser, TOP_K);
+        List<Document> documents = retrieverService.retrieve(message, currentUser, TOP_K, documentId);
 
         for (Document doc : documents) {
             double score = doc.getScore() != null ? doc.getScore() : 0.0;
@@ -167,6 +245,8 @@ public class ChatService {
         assistantMessage.setCreatedAt(Instant.now());
         messageRepository.save(assistantMessage);
 
+        session.setUpdatedAt(Instant.now());
+
         summarizeIfNeeded(session);
 
         long elapsed = System.currentTimeMillis() - startTime;
@@ -186,6 +266,11 @@ public class ChatService {
 
     @Transactional
     public Flux<String> sendMessageStream(Long sessionId, String message) {
+        return sendMessageStream(sessionId, message, null);
+    }
+
+    @Transactional
+    public Flux<String> sendMessageStream(Long sessionId, String message, Long documentId) {
         if (message == null || message.isBlank()) {
             return Flux.error(new AiServiceException("Question cannot be empty."));
         }
@@ -210,7 +295,7 @@ public class ChatService {
 
         generateTitleIfNeeded(session, message);
 
-        List<Document> documents = retrieverService.retrieve(message, currentUser, TOP_K);
+        List<Document> documents = retrieverService.retrieve(message, currentUser, TOP_K, documentId);
 
         for (Document doc : documents) {
             double score = doc.getScore() != null ? doc.getScore() : 0.0;
@@ -244,6 +329,9 @@ public class ChatService {
                     }
                     assistantMessage.setCreatedAt(Instant.now());
                     messageRepository.save(assistantMessage);
+
+                    session.setUpdatedAt(Instant.now());
+                    sessionRepository.save(session);
 
                     summarizeIfNeeded(session);
 

@@ -18,17 +18,45 @@ import {
   DialogContent,
   DialogActions,
   CircularProgress,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  FormHelperText,
 } from '@mui/material';
 import { toast } from 'react-toastify';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import * as departmentService from '../services/departmentService';
 
-const INITIAL_FORM = { name: '', description: '' };
+const INITIAL_FORM = { name: '', description: '', parentId: '' };
 
-export default function Departments() {
+function buildTree(departments) {
+  const byId = new Map(departments.map((d) => [d.id, d]));
+  const childrenMap = new Map();
+  departments.forEach((d) => {
+    const pid = d.parentId ?? null;
+    if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+    childrenMap.get(pid).push(d);
+  });
+  const ordered = [];
+  const depth = new Map();
+  const walk = (pid, level) => {
+    for (const child of childrenMap.get(pid) ?? []) {
+      depth.set(child.id, level);
+      ordered.push(child);
+      walk(child.id, level + 1);
+    }
+  };
+  walk(null, 0);
+  return { byId, ordered, depth };
+}
+
+export default function Departments({ embedded = false }) {
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -40,6 +68,27 @@ export default function Departments() {
   const [formErrors, setFormErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const tree = useMemo(() => buildTree(departments), [departments]);
+
+  const excludedParentIds = useMemo(() => {
+    if (!editTarget) return new Set();
+    const childrenMap = new Map();
+    departments.forEach((d) => {
+      const pid = d.parentId ?? null;
+      if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+      childrenMap.get(pid).push(d);
+    });
+    const set = new Set([editTarget.id]);
+    const queue = [editTarget.id];
+    while (queue.length) {
+      for (const child of childrenMap.get(queue.shift()) ?? []) {
+        set.add(child.id);
+        queue.push(child.id);
+      }
+    }
+    return set;
+  }, [editTarget, departments]);
 
   const fetchDepartments = async () => {
     setLoading(true);
@@ -58,14 +107,14 @@ export default function Departments() {
   }, []);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return departments;
+    if (!search.trim()) return tree.ordered;
     const q = search.toLowerCase();
-    return departments.filter(
+    return tree.ordered.filter(
       (d) =>
         d.name?.toLowerCase().includes(q) ||
         (d.description ?? '').toLowerCase().includes(q)
     );
-  }, [departments, search]);
+  }, [tree.ordered, search]);
 
   const paginated = useMemo(
     () => filtered.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage),
@@ -81,7 +130,7 @@ export default function Departments() {
 
   const handleOpenEdit = (dept) => {
     setEditTarget(dept);
-    setFormData({ name: dept.name, description: dept.description ?? '' });
+    setFormData({ name: dept.name, description: dept.description ?? '', parentId: dept.parentId ?? '' });
     setFormErrors({});
     setOpenDialog(true);
   };
@@ -104,6 +153,7 @@ export default function Departments() {
       const payload = {
         name: formData.name.trim(),
         description: formData.description.trim() || null,
+        parentId: formData.parentId ? Number(formData.parentId) : null,
       };
       if (editTarget) {
         await departmentService.update(editTarget.id, payload);
@@ -150,9 +200,9 @@ export default function Departments() {
 
   return (
     <Box>
-      <Typography variant="h4" sx={{ mb: 3 }}>Departments</Typography>
+      {!embedded && <Typography variant="h4" sx={{ mb: 3 }}>Departments</Typography>}
 
-      <Paper elevation={2} sx={{ borderRadius: 3, p: 2 }}>
+      <Paper elevation={1} sx={{ borderRadius: 2, p: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
           <TextField
             size="small"
@@ -178,30 +228,47 @@ export default function Departments() {
                 <TableHead>
                   <TableRow>
                     <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Parent</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Description</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Created Date</TableCell>
                     <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {paginated.map((dept) => (
-                    <TableRow key={dept.id} hover>
-                      <TableCell>{dept.name}</TableCell>
-                      <TableCell sx={{ color: 'text.secondary' }}>{dept.description || '—'}</TableCell>
-                      <TableCell>{formatDate(dept.createdAt)}</TableCell>
-                      <TableCell align="right">
-                        <IconButton onClick={() => handleOpenEdit(dept)} color="primary" size="small" title="Edit">
-                          <EditIcon />
-                        </IconButton>
-                        <IconButton onClick={() => setDeleteTarget(dept)} color="error" size="small" title="Delete">
-                          <DeleteIcon />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {paginated.map((dept) => {
+                    const level = tree.depth.get(dept.id) ?? 0;
+                    const parentName = dept.parentId ? tree.byId.get(dept.parentId)?.name : null;
+                    return (
+                      <TableRow key={dept.id} hover>
+                        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, pl: level * 3 }}>
+                            {level === 0 ? (
+                              <AccountTreeIcon sx={{ fontSize: 16, color: 'primary.main', flexShrink: 0 }} />
+                            ) : (
+                              <ChevronRightIcon sx={{ fontSize: 16, color: 'text.disabled', flexShrink: 0 }} />
+                            )}
+                            <Typography variant="body2" sx={{ fontWeight: level === 0 ? 600 : 400 }}>
+                              {dept.name}
+                            </Typography>
+                          </Box>
+                        </TableCell>
+                        <TableCell sx={{ color: 'text.secondary' }}>{parentName || '—'}</TableCell>
+                        <TableCell sx={{ color: 'text.secondary' }}>{dept.description || '—'}</TableCell>
+                        <TableCell>{formatDate(dept.createdAt)}</TableCell>
+                        <TableCell align="right">
+                          <IconButton onClick={() => handleOpenEdit(dept)} color="primary" size="small" title="Edit">
+                            <EditIcon />
+                          </IconButton>
+                          <IconButton onClick={() => setDeleteTarget(dept)} color="error" size="small" title="Delete">
+                            <DeleteIcon />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                   {paginated.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={4} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                      <TableCell colSpan={5} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                         {search ? 'No departments match your search' : 'No departments found'}
                       </TableCell>
                     </TableRow>
@@ -236,6 +303,27 @@ export default function Departments() {
             helperText={formErrors.name}
             disabled={submitting}
           />
+          <FormControl fullWidth size="small" margin="dense">
+            <InputLabel>Parent department</InputLabel>
+            <Select
+              label="Parent department"
+              value={formData.parentId}
+              onChange={(e) => setFormData({ ...formData, parentId: e.target.value })}
+              disabled={submitting}
+            >
+              <MenuItem value=""><em>None — top-level department</em></MenuItem>
+              {departments
+                .filter((d) => !excludedParentIds.has(d.id))
+                .map((d) => (
+                  <MenuItem key={d.id} value={d.id} sx={{ pl: (tree.depth.get(d.id) ?? 0) * 2 }}>
+                    {d.name}
+                  </MenuItem>
+                ))}
+            </Select>
+            <FormHelperText>
+              Sub-departments are visible to everyone in this department and the ones above it.
+            </FormHelperText>
+          </FormControl>
           <TextField
             fullWidth
             label="Description"
@@ -262,6 +350,9 @@ export default function Departments() {
         <DialogContent>
           <Typography>
             Are you sure you want to delete <strong>{deleteTarget?.name}</strong>? This action cannot be undone.
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+            Departments that still have sub-departments cannot be deleted.
           </Typography>
         </DialogContent>
         <DialogActions>

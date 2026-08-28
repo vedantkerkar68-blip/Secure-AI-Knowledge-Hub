@@ -34,6 +34,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import PersonAddIcon from '@mui/icons-material/PersonAdd';
 import LockOpenIcon from '@mui/icons-material/LockOpen';
 import LockIcon from '@mui/icons-material/Lock';
+import CloseIcon from '@mui/icons-material/Close';
 import { useAuth } from '../context/AuthContext';
 import * as userService from '../services/userService';
 import * as departmentService from '../services/departmentService';
@@ -45,7 +46,7 @@ const ROLE_OPTIONS = ['', 'ADMIN', 'MANAGER', 'EMPLOYEE'];
 
 const EMPTY_FORM = { firstName: '', lastName: '', email: '', password: '', departmentId: '', roleId: '', status: 'ACTIVE' };
 
-export default function Users() {
+export default function Users({ onClose }) {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [totalElements, setTotalElements] = useState(0);
@@ -137,6 +138,7 @@ export default function Users() {
       firstName: target.firstName ?? '',
       lastName: target.lastName ?? '',
       departmentId: target.departmentId ?? '',
+      roleId: target.roleId ? String(target.roleId) : '',
       status: target.status ?? '',
     });
     setOpenEdit(true);
@@ -149,6 +151,7 @@ export default function Users() {
         firstName: data.firstName.trim(),
         lastName: data.lastName.trim(),
         departmentId: data.departmentId || null,
+        roleId: isOwnProfile(editUser.id) ? undefined : (data.roleId ? parseInt(data.roleId, 10) : undefined),
         status: isOwnProfile(editUser.id) ? undefined : data.status,
       });
       toast.success('User updated');
@@ -180,7 +183,14 @@ export default function Users() {
 
   return (
     <Box>
-      <Typography variant="h4" sx={{ mb: 3 }}>Users</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
+        <Typography variant="h4">Users</Typography>
+        {onClose && (
+          <IconButton onClick={onClose} aria-label="Close users panel">
+            <CloseIcon />
+          </IconButton>
+        )}
+      </Box>
 
       <Paper elevation={2} sx={{ borderRadius: 3, p: 2, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -327,7 +337,18 @@ export default function Users() {
               )} />
               {errors.departmentId && <FormHelperText>{errors.departmentId.message}</FormHelperText>}
             </FormControl>
-            <TextField fullWidth label="Role" value={editUser?.role ?? ''} margin="dense" disabled slotProps={{ input: { readOnly: true } }} />
+            <FormControl fullWidth margin="dense" error={!!errors.roleId}>
+              <InputLabel>Role</InputLabel>
+              <Controller name="roleId" control={control} render={({ field }) => (
+                <Select {...field} label="Role" disabled={submitting || isOwnProfile(editUser?.id)}>
+                  <MenuItem value="1">ADMIN</MenuItem>
+                  <MenuItem value="2">MANAGER</MenuItem>
+                  <MenuItem value="3">EMPLOYEE</MenuItem>
+                </Select>
+              )} />
+              {errors.roleId && <FormHelperText>{errors.roleId.message}</FormHelperText>}
+              {isOwnProfile(editUser?.id) && <FormHelperText>You cannot change your own role</FormHelperText>}
+            </FormControl>
             <FormControl fullWidth margin="dense" error={!!errors.status}>
               <InputLabel>Status</InputLabel>
               <Controller name="status" control={control} rules={{ required: 'Required' }} render={({ field }) => (

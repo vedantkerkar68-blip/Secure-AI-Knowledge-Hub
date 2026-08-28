@@ -20,3 +20,5 @@ export const download = (id) =>
   api.get(`/documents/${id}/download`, { responseType: 'blob' });
 
 export const reprocess = (id) => api.post(`/documents/${id}/reprocess`);
+
+export const deleteDocument = (id) => api.delete(`/documents/${id}`);

@@ -16,4 +16,6 @@ public class ChatRequest {
 
     @NotBlank
     private String question;
+
+    private Long documentId;
 }

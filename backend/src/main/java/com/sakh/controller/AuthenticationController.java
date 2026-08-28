@@ -3,6 +3,7 @@ package com.sakh.controller;
 import com.sakh.dto.auth.AuthResponse;
 import com.sakh.dto.auth.LoginRequest;
 import com.sakh.dto.auth.RegisterRequest;
+import com.sakh.security.SakhUserDetails;
 import com.sakh.service.AuthenticationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -10,8 +11,10 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -44,5 +47,22 @@ public class AuthenticationController {
     })
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         return ResponseEntity.ok(authenticationService.login(request));
+    }
+
+    @PostMapping("/logout")
+    @Operation(summary = "Logout", description = "Revokes the current JWT token so it can no longer be used")
+    public ResponseEntity<Void> logout(@RequestHeader("Authorization") String authorization,
+                                       Authentication authentication) {
+        String token = authorization.substring(7);
+        Long userId = ((SakhUserDetails) authentication.getPrincipal()).getId();
+        authenticationService.logout(token, userId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/refresh")
+    @Operation(summary = "Refresh token", description = "Rotates the current JWT token, revoking the old one and returning a fresh token")
+    public ResponseEntity<AuthResponse> refresh(@RequestHeader("Authorization") String authorization) {
+        String token = authorization.substring(7);
+        return ResponseEntity.ok(authenticationService.refresh(token));
     }
 }

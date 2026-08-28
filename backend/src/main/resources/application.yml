@@ -137,6 +137,16 @@ app:
 
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
 
+  rate-limit:
+
+    login-limit: ${RATE_LIMIT_LOGIN:10}
+
+    register-limit: ${RATE_LIMIT_REGISTER:5}
+
+    chat-limit: ${RATE_LIMIT_CHAT:60}
+
+    window-seconds: ${RATE_LIMIT_WINDOW_SECONDS:60}
+
 logging:
 
   file:

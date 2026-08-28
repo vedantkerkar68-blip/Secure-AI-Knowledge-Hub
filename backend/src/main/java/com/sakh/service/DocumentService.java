@@ -1,5 +1,6 @@
 package com.sakh.service;
 
+import com.sakh.dto.department.DepartmentResponse;
 import com.sakh.dto.document.DocumentListResponse;
 import com.sakh.dto.document.DocumentPreviewResponse;
 import com.sakh.dto.document.DocumentResponse;
@@ -11,6 +12,7 @@ import com.sakh.entity.Department;
 import com.sakh.entity.Document;
 import com.sakh.entity.DocumentMetadata;
 import com.sakh.entity.User;
+import com.sakh.enums.AccessScope;
 import com.sakh.enums.ActivityType;
 import com.sakh.enums.DocumentStatus;
 import com.sakh.exception.ResourceNotFoundException;
@@ -23,6 +25,7 @@ import com.sakh.storage.StorageService;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
@@ -41,6 +44,7 @@ public class DocumentService {
     private final StorageService storageService;
     private final DocumentProcessingService processingService;
     private final ActivityLogService activityLogService;
+    private final DepartmentService departmentService;
 
     public DocumentService(DocumentRepository documentRepository,
                            DocumentMetadataRepository documentMetadataRepository,
@@ -48,7 +52,8 @@ public class DocumentService {
                            UserRepository userRepository,
                            StorageService storageService,
                            DocumentProcessingService processingService,
-                           ActivityLogService activityLogService) {
+                           ActivityLogService activityLogService,
+                           DepartmentService departmentService) {
         this.documentRepository = documentRepository;
         this.documentMetadataRepository = documentMetadataRepository;
         this.departmentRepository = departmentRepository;
@@ -56,15 +61,23 @@ public class DocumentService {
         this.storageService = storageService;
         this.processingService = processingService;
         this.activityLogService = activityLogService;
+        this.departmentService = departmentService;
     }
 
-    public UploadDocumentResponse uploadDocument(MultipartFile file, Long departmentId) {
+    public UploadDocumentResponse uploadDocument(MultipartFile file, Long departmentId, String accessScope) {
         validateFile(file);
 
         User currentUser = getCurrentUser();
 
+        if (departmentId == null) {
+            throw new IllegalArgumentException("Please select a department for this document.");
+        }
+
         Department department = departmentRepository.findById(departmentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Department not found with id: " + departmentId));
+
+        AccessScope scope = resolveAccessScope(accessScope);
+        validateUploadTarget(currentUser, department, scope);
 
         String storagePath = storageService.store(file);
 
@@ -101,6 +114,7 @@ public class DocumentService {
         document.setDepartment(department);
         document.setUploadedBy(currentUser);
         document.setStatus(DocumentStatus.PENDING);
+        document.setAccessScope(scope);
         document.setGroupId(groupId);
         document.setVersion(version);
         document.setIsLatest(true);
@@ -131,13 +145,21 @@ public class DocumentService {
     public Page<DocumentListResponse> getAllDocuments(String search, String department, DocumentStatus status, Pageable pageable) {
         User currentUser = getCurrentUser();
         String userRole = getCurrentUserRole();
-        
-        // Filter by department for MANAGER and EMPLOYEE
-        if (("MANAGER".equals(userRole) || "EMPLOYEE".equals(userRole)) && currentUser.getDepartment() != null) {
-            department = currentUser.getDepartment().getName();
+
+        List<Long> allowedDepartmentIds = resolveVisibleDepartmentIds(currentUser, userRole);
+
+        // When visibility is scoped to the department tree, ignore the raw department filter
+        // so users can only see documents from their own branch of the tree.
+        if (allowedDepartmentIds != null) {
+            department = null;
         }
-        
-        Page<Document> documents = documentRepository.findWithFilters(search, department, status, pageable);
+
+        // Non-admins may only see documents that have finished processing.
+        if (!"ADMIN".equals(userRole)) {
+            status = DocumentStatus.READY;
+        }
+
+        Page<Document> documents = documentRepository.findWithFilters(search, department, status, allowedDepartmentIds, pageable);
         return documents.map(this::toListResponse);
     }
 
@@ -146,6 +168,7 @@ public class DocumentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
 
         checkDocumentAccess(document);
+        requireReadable(document);
 
         DocumentMetadata metadata = documentMetadataRepository.findByDocumentId(id);
 
@@ -166,13 +189,12 @@ public class DocumentService {
     public Page<DocumentListResponse> searchDocuments(String query, Pageable pageable) {
         User currentUser = getCurrentUser();
         String userRole = getCurrentUserRole();
-        String department = null;
 
-        if (("MANAGER".equals(userRole) || "EMPLOYEE".equals(userRole)) && currentUser.getDepartment() != null) {
-            department = currentUser.getDepartment().getName();
-        }
+        List<Long> allowedDepartmentIds = resolveVisibleDepartmentIds(currentUser, userRole);
 
-        Page<Document> documents = documentRepository.searchByKeyword(query, department, pageable);
+        DocumentStatus status = "ADMIN".equals(userRole) ? null : DocumentStatus.READY;
+
+        Page<Document> documents = documentRepository.searchByKeyword(query, status != null ? status.name() : null, allowedDepartmentIds, pageable);
         return documents.map(this::toListResponse);
     }
 
@@ -181,6 +203,7 @@ public class DocumentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
         
         checkDocumentAccess(document);
+        requireReadable(document);
         
         return toResponse(document);
     }
@@ -249,11 +272,28 @@ public class DocumentService {
                 .build();
     }
 
+    public void deleteDocument(Long id) {
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
+
+        checkDocumentAccess(document);
+
+        String userRole = getCurrentUserRole();
+        if (!"ADMIN".equals(userRole)) {
+            throw new SecurityException("Only ADMIN can delete documents");
+        }
+
+        activityLogService.log(getCurrentUser(), ActivityType.DELETE,
+                "Document: " + document.getId() + " - " + document.getTitle());
+        documentRepository.delete(document);
+    }
+
     public List<DocumentVersionResponse> getDocumentVersions(Long id) {
         Document document = documentRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
         
         checkDocumentAccess(document);
+        requireReadable(document);
         
         List<Document> versions = documentRepository.findByGroupIdOrderByVersionDesc(document.getGroupId());
         return versions.stream()
@@ -266,6 +306,7 @@ public class DocumentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + id));
         
         checkDocumentAccess(document);
+        requireReadable(document);
 
         activityLogService.log(getCurrentUser(), ActivityType.DOWNLOAD,
                 "Document: " + document.getId() + " - " + document.getTitle());
@@ -276,43 +317,199 @@ public class DocumentService {
     private void checkDocumentAccess(Document document) {
         User currentUser = getCurrentUser();
         String userRole = getCurrentUserRole();
-        
+
         // ADMIN can access all documents
         if ("ADMIN".equals(userRole)) {
             return;
         }
-        
-        // MANAGER and EMPLOYEE can only access documents in their department
+
+        // Documents shared with everyone are visible to all authenticated users
+        if (document.getAccessScope() == AccessScope.ALL) {
+            return;
+        }
+
         if (currentUser.getDepartment() == null || document.getDepartment() == null) {
             throw new ResourceNotFoundException("Document not found with id: " + document.getId());
         }
-        
-        if (!currentUser.getDepartment().getId().equals(document.getDepartment().getId())) {
+
+        List<Long> visibleDepartmentIds = collectVisibleDepartmentIds(currentUser);
+        if (!visibleDepartmentIds.contains(document.getDepartment().getId())) {
             throw new ResourceNotFoundException("Document not found with id: " + document.getId());
         }
     }
+
+    /**
+     * Non-admins may only view documents that have finished processing.
+     */
+    private void requireReadable(Document document) {
+        if (!"ADMIN".equals(getCurrentUserRole()) && document.getStatus() != DocumentStatus.READY) {
+            throw new ResourceNotFoundException("Document not found with id: " + document.getId());
+        }
+    }
+
+    /**
+     * Resolves the department ids a user is allowed to see documents for.
+     * Returns null for admins (no restriction).
+     */
+    private List<Long> resolveVisibleDepartmentIds(User user, String userRole) {
+        if ("ADMIN".equals(userRole)) {
+            return null;
+        }
+        return collectVisibleDepartmentIds(user);
+    }
+
+    /**
+     * Collects the user's department plus all ancestors (documents flow down the tree).
+     */
+    private List<Long> collectVisibleDepartmentIds(User user) {
+        if (user.getDepartment() == null) {
+            return List.of(-1L);
+        }
+        return departmentService.collectAncestorIds(
+                departmentService.getAllDepartmentsList(), user.getDepartment().getId());
+    }
+
+    /**
+     * Validates that the current user is allowed to upload to the given department
+     * with the given access scope.
+     */
+    private void validateUploadTarget(User user, Department department, AccessScope scope) {
+        String userRole = getCurrentUserRole();
+
+        if ("ADMIN".equals(userRole)) {
+            return;
+        }
+
+        if (!"MANAGER".equals(userRole)) {
+            throw new AccessDeniedException("Only administrators and managers can upload documents");
+        }
+
+        if (scope == AccessScope.ALL) {
+            throw new AccessDeniedException("Only administrators can share documents with everyone");
+        }
+
+        if (user.getDepartment() == null) {
+            throw new AccessDeniedException("Your account is not assigned to a department");
+        }
+
+        List<Long> subtreeIds = departmentService.collectSubtreeIds(
+                departmentService.getAllDepartmentsList(), user.getDepartment().getId());
+        if (!subtreeIds.contains(department.getId())) {
+            throw new AccessDeniedException(
+                    "You can only upload documents to your own department or its sub-departments");
+        }
+    }
+
+    private AccessScope resolveAccessScope(String value) {
+        if (value == null || value.isBlank()) {
+            return AccessScope.DEPARTMENT;
+        }
+        try {
+            return AccessScope.valueOf(value.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid access scope: " + value);
+        }
+    }
+
+    /**
+     * Returns the departments the current user may upload documents to.
+     * Admin: every department. Manager: own department and its sub-departments.
+     */
+    public List<DepartmentResponse> getUploadOptions() {
+        User currentUser = getCurrentUser();
+        String userRole = getCurrentUserRole();
+        List<Department> all = departmentService.getAllDepartmentsList();
+
+        if ("ADMIN".equals(userRole)) {
+            return all.stream().map(departmentService::toResponse).toList();
+        }
+
+        if ("MANAGER".equals(userRole) && currentUser.getDepartment() != null) {
+            List<Long> subtreeIds = departmentService.collectSubtreeIds(
+                    all, currentUser.getDepartment().getId());
+            return all.stream()
+                    .filter(d -> subtreeIds.contains(d.getId()))
+                    .map(departmentService::toResponse)
+                    .toList();
+        }
+
+        return List.of();
+    }
+
+    private static final long MAX_FILE_SIZE = 10L * 1024 * 1024;
 
     private void validateFile(MultipartFile file) {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("File is empty");
         }
 
-        String contentType = file.getContentType();
-        String filename = file.getOriginalFilename();
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException("File exceeds the maximum allowed size of 10MB");
+        }
 
-        if (!isAllowedFileType(contentType, filename)) {
+        String filename = file.getOriginalFilename();
+        String extension = getExtension(filename);
+
+        if (!isAllowedExtension(extension)) {
             throw new IllegalArgumentException("Unsupported file type. Allowed: pdf, docx, md, txt");
+        }
+
+        if (!matchesContentSignature(file, extension)) {
+            throw new IllegalArgumentException("File content does not match the declared file type");
         }
     }
 
-    private boolean isAllowedFileType(String contentType, String filename) {
-        String extension = "";
-        if (filename != null && filename.contains(".")) {
-            extension = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
-        }
+    private boolean isAllowedExtension(String extension) {
+        return "pdf".equals(extension) || "docx".equals(extension)
+                || "md".equals(extension) || "txt".equals(extension);
+    }
 
-        return "pdf".equals(extension) || "docx".equals(extension) ||
-                "md".equals(extension) || "txt".equals(extension);
+    private String getExtension(String filename) {
+        if (filename != null && filename.contains(".")) {
+            return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
+        }
+        return "";
+    }
+
+    /**
+     * Verifies the declared extension against the actual file content using
+     * magic bytes. Text files (txt, md) are rejected if they contain NUL bytes,
+     * which would indicate a non-text payload disguised with a text extension.
+     */
+    private boolean matchesContentSignature(MultipartFile file, String extension) {
+        try (var input = file.getInputStream()) {
+            byte[] header = input.readNBytes(8);
+
+            if ("pdf".equals(extension)) {
+                return header.length >= 5
+                        && header[0] == '%' && header[1] == 'P' && header[2] == 'D'
+                        && header[3] == 'F' && header[4] == '-';
+            }
+
+            if ("docx".equals(extension)) {
+                return header.length >= 4
+                        && header[0] == 'P' && header[1] == 'K'
+                        && (header[2] == 3 || header[2] == 5)
+                        && (header[3] == 4 || header[3] == 6);
+            }
+
+            if ("txt".equals(extension) || "md".equals(extension)) {
+                return containsNoNullBytes(header);
+            }
+
+            return true;
+        } catch (java.io.IOException e) {
+            throw new IllegalArgumentException("Could not read uploaded file");
+        }
+    }
+
+    private boolean containsNoNullBytes(byte[] bytes) {
+        for (byte b : bytes) {
+            if (b == 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private User getCurrentUser() {
@@ -346,11 +543,8 @@ public class DocumentService {
     }
 
     private String getFileType(MultipartFile file) {
-        String filename = file.getOriginalFilename();
-        if (filename != null && filename.contains(".")) {
-            return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
-        }
-        return "unknown";
+        String type = getExtension(file.getOriginalFilename());
+        return type.isEmpty() ? "unknown" : type;
     }
 
     private DocumentListResponse toListResponse(Document document) {
@@ -361,6 +555,8 @@ public class DocumentService {
                 .fileType(document.getFileType())
                 .fileSize(document.getFileSize())
                 .department(document.getDepartment() != null ? document.getDepartment().getName() : null)
+                .departmentId(document.getDepartment() != null ? document.getDepartment().getId() : null)
+                .accessScope(document.getAccessScope() != null ? document.getAccessScope().name() : AccessScope.DEPARTMENT.name())
                 .uploadedBy(document.getUploadedBy() != null ? document.getUploadedBy().getEmail() : null)
                 .uploadedAt(document.getCreatedAt())
                 .status(document.getStatus() != null ? document.getStatus().name() : null)
@@ -375,6 +571,8 @@ public class DocumentService {
                 .fileType(document.getFileType())
                 .fileSize(document.getFileSize())
                 .department(document.getDepartment() != null ? document.getDepartment().getName() : null)
+                .departmentId(document.getDepartment() != null ? document.getDepartment().getId() : null)
+                .accessScope(document.getAccessScope() != null ? document.getAccessScope().name() : AccessScope.DEPARTMENT.name())
                 .uploadedBy(document.getUploadedBy() != null ? document.getUploadedBy().getEmail() : null)
                 .uploadedAt(document.getCreatedAt())
                 .status(document.getStatus() != null ? document.getStatus().name() : null)

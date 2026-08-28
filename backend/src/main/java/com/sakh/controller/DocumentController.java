@@ -1,5 +1,6 @@
 package com.sakh.controller;
 
+import com.sakh.dto.department.DepartmentResponse;
 import com.sakh.dto.document.DocumentListResponse;
 import com.sakh.dto.document.DocumentPreviewResponse;
 import com.sakh.dto.document.DocumentResponse;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -53,9 +55,17 @@ public class DocumentController {
     @Operation(summary = "Upload document", description = "Uploads a new document file for processing (admin or manager)")
     public ResponseEntity<UploadDocumentResponse> uploadDocument(
             @RequestPart("file") MultipartFile file,
-            @RequestParam(value = "departmentId", required = false) Long departmentId) {
-        UploadDocumentResponse response = documentService.uploadDocument(file, departmentId);
+            @RequestParam(value = "departmentId", required = false) Long departmentId,
+            @RequestParam(value = "accessScope", required = false) String accessScope) {
+        UploadDocumentResponse response = documentService.uploadDocument(file, departmentId, accessScope);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+
+    @GetMapping("/upload-options")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
+    @Operation(summary = "Upload department options", description = "Returns the departments the current user may upload documents to (admin: all, manager: own subtree)")
+    public ResponseEntity<List<DepartmentResponse>> getUploadOptions() {
+        return ResponseEntity.ok(documentService.getUploadOptions());
     }
 
     @GetMapping
@@ -133,6 +143,14 @@ public class DocumentController {
     @Operation(summary = "Reprocess document", description = "Triggers reprocessing of a document (admin or manager)")
     public ResponseEntity<UploadDocumentResponse> reprocessDocument(@PathVariable Long id) {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(documentService.reprocessDocument(id));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Delete document", description = "Deletes a document by its ID (admin only)")
+    public ResponseEntity<Void> deleteDocument(@PathVariable Long id) {
+        documentService.deleteDocument(id);
+        return ResponseEntity.noContent().build();
     }
     
     private String determineContentType(Resource resource) {

@@ -13,6 +13,9 @@ public class UserProfileResponse {
     private final String firstName;
     private final String lastName;
     private final String email;
+    private final Long roleId;
     private final String role;
+    private final Long departmentId;
     private final String department;
+    private final String status;
 }

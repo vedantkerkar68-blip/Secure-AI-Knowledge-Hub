@@ -17,20 +17,25 @@ Access control is enforced at every layer: authentication, API endpoints, docume
 ## Key Features
 
 - **JWT Authentication** — stateless token-based auth with configurable expiry
+- **JWT Revocation & Rotation** — tokens carry a `jti` claim; logout revokes the token server-side, and refresh rotates the current token while revoking the old one
+- **Account Status Enforcement** — non-active accounts are rejected at login and their tokens stop working immediately
+- **Rate Limiting** — per-client limits on login, registration, and chat endpoints (429 on breach)
 - **Role-Based Access Control (RBAC)** — ADMIN, MANAGER, EMPLOYEE, GUEST roles with hierarchical permissions
 - **Department-Based Access** — documents are scoped to departments; users access only their department's documents (ADMIN sees all)
-- **User Management** — admin-only user registration, status toggling, role assignment
+- **User Management** — admin-only user registration, status toggling, role assignment (with last-admin protection)
 - **Department Management** — admin-only CRUD for organizational departments
-- **Document Upload & Processing** — supports PDF, DOCX; async text extraction, chunking, embedding generation
+- **Document Upload & Processing** — supports PDF, DOCX, TXT, MD; magic-byte content validation and size limits on upload; async text extraction, chunking, embedding generation
 - **Versioning** — document re-upload creates new versions while preserving history
 - **Vector Search** — pgvector-based cosine similarity search across embedded document chunks
 - **Hybrid Search** — combines semantic (vector) and keyword (BM25-style) search with reciprocal rank fusion
+- **Document-Scoped Chat** — attach a single document to a question so retrieval is confined to it, still enforcing access control
 - **Retrieval-Augmented Generation** — multi-query expansion, query rewriting, context-aware prompting, answer grounding
 - **Hallucination Mitigation** — sentence-level verification against source documents
-- **Source Citations** — each answer cites specific document chunks with similarity scores
-- **Chat Sessions** — persistent conversation history, automatic summarization at scale, title generation
-- **Activity Logging** — audit trail for logins, uploads, queries, and admin actions
-- **Dashboard Metrics** — document counts, query volumes, recent activity, retrieval effectiveness
+- **Source Citations** — each answer cites specific document chunks with similarity scores; sources drawer with Document Name, Page, Section, chunk preview and Open PDF (page highlight)
+- **Chat Sessions** — per-user isolated sessions (`sakh_chat_sessions_{userId}`), server-created IDs via `POST /chat/sessions`; Markdown rendering via `react-markdown` + `remark-gfm` (headings, bold, tables, code blocks, blockquotes); title auto-set from first question in a single `setSessions` updater (no race); sessions persist across logout/login for same user, different users never see each other's data; session list, detail, delete
+- **Activity Logging** — audit trail (`createdAt`→Timestamp, `userEmail`→User, `action`→Action, `resource`→Details), filterable by action, search, date range with summary stats; `GET /api/admin/activity?page=0&size=20` verified
+- **Dashboard Metrics** — role-based dashboard: ADMIN sees Users/Departments/Documents/Processed/Failed/Chat Sessions/Activity + Quick Actions (Add Employee, Add Department, Upload Document, New Chat) + Recent Activity/Uploads; MANAGER sees Department Documents/Users + Recent Uploads + My Chats (Upload Document, New Chat); EMPLOYEE sees My Documents/Uploads + My Chats (Upload Document, New Chat)
+- **Backend Health UX** — cold-start aware splash screen with automatic reconnect, live status indicators, and login-time health banners
 - **OpenAPI Documentation** — Swagger UI at `/api/swagger-ui.html`
 - **Docker Support** — multi-stage Dockerfiles for backend and frontend, docker-compose for local development
 - **Production Deployment** — configured for Render (backend) + Vercel (frontend) + Neon PostgreSQL
@@ -41,11 +46,14 @@ Access control is enforced at every layer: authentication, API endpoints, docume
 
 | Layer | Technology | Version |
 |---|---|---|
-| **Frontend** | React | 19 |
-| | Vite | 6 |
-| | Material UI | 7 |
-| | React Router | 7 |
-| | Axios | 1 |
+| **Frontend** | React | 19.1.0 |
+| | Vite | 6.3.5 |
+| | Material UI | 7.1.0 |
+| | React Router | 7.6.1 |
+| | Axios | 1.9.0 |
+| | React Hook Form | 7.56.0 |
+| | React Markdown + remark-gfm | 10.1.0 + 4.0.1 |
+| | React Toastify | 11.1.0 |
 | **Backend** | Java | 21 |
 | | Spring Boot | 3.5 |
 | | Spring Security | 6 |
@@ -147,11 +155,14 @@ flowchart LR
 
 ## Security Architecture
 
-- **Authentication**: JWT tokens issued at login, validated on every request by `JwtAuthenticationFilter`
+- **Authentication**: JWT tokens issued at login with a `jti` claim, validated on every request by `JwtAuthenticationFilter`; revocation checked against the `jwt_revocations` table
+- **Token Lifecycle**: `POST /auth/logout` revokes the current token; `POST /auth/refresh` rotates it; deactivated/locked accounts are rejected immediately
 - **Password Hashing**: BCrypt via Spring Security `PasswordEncoder`
 - **Authorization**: Method-level `@PreAuthorize` annotations + request-matcher rules in `SecurityConfig`
 - **Role Hierarchy**: ADMIN > MANAGER > EMPLOYEE > GUEST
 - **Document Access**: Vector search and keyword search filter results by department ID and role — ADMIN sees all, MANAGER sees department, EMPLOYEE sees department + own uploads
+- **Upload Validation**: extension allowlist plus magic-byte content verification and a 10MB size cap
+- **Rate Limiting**: fixed-window limits on login, registration, and chat endpoints, keyed by client IP or user
 - **CORS**: Configurable via `CORS_ALLOWED_ORIGINS` env var; supports multiple origins
 - **Secrets**: All credentials are injected via environment variables — no hardcoded production secrets in source code
 - **Frontend**: Route-level guards exist for UX but serve no security purpose; all authorization is enforced server-side
@@ -175,35 +186,35 @@ flowchart LR
 Secure-AI-Knowledge-Hub/
 ├── backend/
 │   ├── src/main/java/com/sakh/
-│   │   ├── config/            # Swagger configuration
-│   │   ├── controller/        # REST controllers (9)
+│   │   ├── config/            # Swagger, web interceptor configuration
+│   │   ├── controller/        # REST controllers (11)
 │   │   ├── dto/               # Request/response DTOs
-│   │   ├── entity/            # JPA entities (9)
+│   │   ├── entity/            # JPA entities (10)
 │   │   ├── enums/             # ActivityType, DocumentStatus, UserStatus
 │   │   ├── exception/         # Global exception handler
 │   │   ├── llm/               # LLM service (Gemini wrapper)
 │   │   ├── processing/        # Document processing pipeline
 │   │   │   └── parser/        # PDF, DOCX parsers
 │   │   ├── rag/               # RAG pipeline (7 components)
-│   │   ├── repository/        # Spring Data JPA repositories (9)
-│   │   ├── security/          # JWT, CORS, auth filter, security config
-│   │   ├── service/           # Business services (10)
+│   │   ├── repository/        # Spring Data JPA repositories (10)
+│   │   ├── security/          # JWT, revocation, rate limiting, auth filter, security config
+│   │   ├── service/           # Business services (11)
 │   │   ├── storage/           # Local file storage
 │   │   └── validation/        # Validation constants
 │   ├── src/main/resources/
-│   │   ├── db/migration/      # Flyway migrations (V1-V7)
+│   │   ├── db/migration/      # Flyway migrations (V1-V9)
 │   │   ├── application.yml    # Main config (env var placeholders)
 │   │   └── application-prod.yml
 │   ├── Dockerfile
 │   └── pom.xml
 ├── frontend/
 │   ├── src/
-│   │   ├── components/        # Layout, common components
-│   │   ├── context/           # Auth context
-│   │   ├── pages/             # Route pages (9)
-│   │   ├── routes/            # React Router config
-│   │   ├── services/          # Axios API services (7)
-│   │   └── theme.js           # MUI theme
+│   │   ├── components/        # Layout (MainLayout, Navbar, Sidebar - role-based), common
+│   │   ├── context/           # AuthContext (no chat-clear on login/logout; per-user key isolation)
+│   │   ├── pages/             # 9 pages: Login, Dashboard (role-based), Users, Departments, Documents, Chat (Markdown+sources drawer), ActivityLogs (createdAt/userEmail/resource mapping), Profile, NotFound
+│   │   ├── routes/            # React Router + PrivateRoute guard
+│   │   ├── services/          # Axios services (8): auth, user, department, document, chat, dashboard, activityLog, api
+│   │   └── theme.js           # MUI theme (Plus Jakarta Sans)
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── vercel.json
@@ -305,6 +316,10 @@ ADMIN users can register additional users through the Users page.
 | `GEMINI_API_KEY` | Google Gemini API key | *(required)* |
 | `APP_STORAGE_UPLOAD_DIR` | File upload directory | `./storage/uploads` |
 | `CORS_ALLOWED_ORIGINS` | Allowed CORS origins | `http://localhost:3000,http://localhost:5173` |
+| `RATE_LIMIT_LOGIN` | Max login attempts per window per IP | `10` |
+| `RATE_LIMIT_REGISTER` | Max registration attempts per window per IP | `5` |
+| `RATE_LIMIT_CHAT` | Max chat requests per window per user | `60` |
+| `RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window length in seconds | `60` |
 
 ### Frontend (`frontend/.env` or Vercel env vars)
 
@@ -393,11 +408,9 @@ OpenAPI spec at `/api/v3/api-docs`.
 
 - Persistent object storage (AWS S3 / MinIO) for uploaded documents
 - Redis caching for vector search results and session state
-- Asynchronous document processing with progress tracking
-- Streaming AI responses for real-time UX
+- Scheduled cleanup of expired token revocations
 - Prometheus/Grafana observability
 - CI/CD pipeline with automated integration tests
-- Rate limiting on chat endpoints
 - Production-grade monitoring and alerting
 
 ---

@@ -7,6 +7,8 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -32,6 +34,13 @@ public class Department {
 
 	@Column(name = "description", columnDefinition = "TEXT")
 	private String description;
+
+	/**
+	 * Parent department in the organization tree. Null for root departments.
+	 */
+	@ManyToOne
+	@JoinColumn(name = "parent_id")
+	private Department parent;
 
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt = Instant.now();

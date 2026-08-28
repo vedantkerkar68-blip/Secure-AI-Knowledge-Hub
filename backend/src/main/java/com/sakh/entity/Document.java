@@ -1,5 +1,6 @@
 package com.sakh.entity;
 
+import com.sakh.enums.AccessScope;
 import com.sakh.enums.DocumentStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -59,6 +60,10 @@ public class Document {
     @Enumerated(EnumType.STRING)
     @Column(name = "status", length = 20)
     private DocumentStatus status;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "access_scope", length = 20)
+    private AccessScope accessScope;
 
     @Column(name = "group_id")
     private Long groupId;

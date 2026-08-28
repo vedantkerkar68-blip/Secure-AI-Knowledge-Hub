@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -23,7 +23,11 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  FormHelperText,
   LinearProgress,
+  Radio,
+  RadioGroup,
+  FormControlLabel,
   InputAdornment,
   Tooltip,
   Grid,
@@ -35,9 +39,11 @@ import DownloadIcon from '@mui/icons-material/Download';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import HistoryIcon from '@mui/icons-material/History';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import InsertDriveFileIcon from '@mui/icons-material/InsertDriveFile';
 import * as documentService from '../services/documentService';
 import * as departmentService from '../services/departmentService';
+import { useAuth } from '../context/AuthContext';
 
 const STATUS_COLORS = {
   PENDING: 'default',
@@ -55,6 +61,26 @@ const FILE_TYPE_COLORS = {
 };
 
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'READY', 'FAILED', 'ARCHIVED'];
+
+function buildDeptTree(list) {
+  const childrenMap = new Map();
+  list.forEach((d) => {
+    const pid = d.parentId ?? null;
+    if (!childrenMap.has(pid)) childrenMap.set(pid, []);
+    childrenMap.get(pid).push(d);
+  });
+  const ordered = [];
+  const depth = new Map();
+  const walk = (pid, level) => {
+    for (const child of childrenMap.get(pid) ?? []) {
+      depth.set(child.id, level);
+      ordered.push(child);
+      walk(child.id, level + 1);
+    }
+  };
+  walk(null, 0);
+  return { ordered, depth };
+}
 
 function formatDate(iso) {
   if (!iso) return '-';
@@ -79,7 +105,11 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-export default function Documents() {
+export default function Documents({ embedded = false }) {
+  const { user } = useAuth();
+  const canUpload = user?.role === 'ADMIN' || user?.role === 'MANAGER';
+  const isAdmin = user?.role === 'ADMIN';
+
   const [documents, setDocuments] = useState([]);
   const [totalElements, setTotalElements] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -96,6 +126,9 @@ export default function Documents() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploadDeptId, setUploadDeptId] = useState('');
+  const [uploadScope, setUploadScope] = useState('DEPARTMENT');
+  const [uploadOptions, setUploadOptions] = useState([]);
+  const [uploadError, setUploadError] = useState('');
   const [dragOver, setDragOver] = useState(false);
 
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -106,6 +139,10 @@ export default function Documents() {
   const [versionsData, setVersionsData] = useState([]);
   const [versionsTitle, setVersionsTitle] = useState('');
   const [versionsLoading, setVersionsLoading] = useState(false);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const pollingRef = useRef(new Set());
   const refreshRef = useRef(null);
@@ -141,6 +178,23 @@ export default function Documents() {
   }, []);
 
   useEffect(() => {
+    if (!canUpload) return;
+    departmentService
+      .getUploadOptions()
+      .then((res) => setUploadOptions(res.data ?? []))
+      .catch(() => {});
+  }, [canUpload]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setStatusFilter('READY');
+    }
+  }, [isAdmin]);
+
+  const uploadTree = useMemo(() => buildDeptTree(uploadOptions), [uploadOptions]);
+  const uploadDeptName = uploadOptions.find((d) => d.id === Number(uploadDeptId))?.name;
+
+  useEffect(() => {
     if (pollingRef.current.size === 0) return;
     const interval = setInterval(async () => {
       const ids = Array.from(pollingRef.current);
@@ -173,6 +227,8 @@ export default function Documents() {
   const openUpload = () => {
     setSelectedFile(null);
     setUploadDeptId('');
+    setUploadScope('DEPARTMENT');
+    setUploadError('');
     setUploadProgress(0);
     setUploadOpen(true);
   };
@@ -191,9 +247,14 @@ export default function Documents() {
 
   const handleUpload = async () => {
     if (!selectedFile) return;
+    if (!uploadDeptId) {
+      setUploadError('Please select a department for this document.');
+      return;
+    }
     const formData = new FormData();
     formData.append('file', selectedFile);
-    if (uploadDeptId) formData.append('departmentId', uploadDeptId);
+    formData.append('departmentId', uploadDeptId);
+    formData.append('accessScope', uploadScope);
     setUploading(true);
     setUploadProgress(0);
     try {
@@ -271,11 +332,27 @@ export default function Documents() {
     }
   };
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await documentService.deleteDocument(deleteTarget.id);
+      toast.success('Document deleted');
+      setDeleteOpen(false);
+      setDeleteTarget(null);
+      fetchDocuments();
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <Box>
-      <Typography variant="h4" sx={{ mb: 3 }}>Documents</Typography>
+      {!embedded && <Typography variant="h4" sx={{ mb: 3 }}>Documents</Typography>}
 
-      <Paper elevation={2} sx={{ borderRadius: 3, p: 2, mb: 3 }}>
+      <Paper elevation={embedded ? 1 : 2} sx={{ borderRadius: 3, p: 2, mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
           <TextField
             size="small"
@@ -292,34 +369,40 @@ export default function Documents() {
             }}
             sx={{ flexGrow: 1, minWidth: 200 }}
           />
-          <FormControl size="small" sx={{ minWidth: 160 }}>
-            <InputLabel>Department</InputLabel>
-            <Select
-              value={departmentFilter}
-              label="Department"
-              onChange={(e) => { setDepartmentFilter(e.target.value); setPage(0); }}
-            >
-              <MenuItem value="">All</MenuItem>
-              {departments.map((d) => (
-                <MenuItem key={d.id} value={d.name}>{d.name}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <FormControl size="small" sx={{ minWidth: 140 }}>
-            <InputLabel>Status</InputLabel>
-            <Select
-              value={statusFilter}
-              label="Status"
-              onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
-            >
-              {STATUS_OPTIONS.map((s) => (
-                <MenuItem key={s} value={s}>{s || 'All'}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-          <Button variant="contained" startIcon={<CloudUploadIcon />} onClick={openUpload}>
-            Upload
-          </Button>
+          {isAdmin && (
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Department</InputLabel>
+              <Select
+                value={departmentFilter}
+                label="Department"
+                onChange={(e) => { setDepartmentFilter(e.target.value); setPage(0); }}
+              >
+                <MenuItem value="">All</MenuItem>
+                {departments.map((d) => (
+                  <MenuItem key={d.id} value={d.name}>{d.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          {isAdmin && (
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Status</InputLabel>
+              <Select
+                value={statusFilter}
+                label="Status"
+                onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
+              >
+                {STATUS_OPTIONS.map((s) => (
+                  <MenuItem key={s} value={s}>{s || 'All'}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+          {canUpload && (
+            <Button variant="contained" startIcon={<CloudUploadIcon />} onClick={openUpload}>
+              Upload
+            </Button>
+          )}
         </Box>
       </Paper>
 
@@ -357,7 +440,14 @@ export default function Documents() {
                           variant="outlined"
                         />
                       </TableCell>
-                      <TableCell sx={{ color: 'text.secondary' }}>{doc.department || '—'}</TableCell>
+                      <TableCell>
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Typography variant="body2" sx={{ color: 'text.secondary' }}>{doc.department || '—'}</Typography>
+    {doc.accessScope === 'ALL' && (
+      <Chip size="small" variant="outlined" color="primary" label="Everyone" sx={{ '& .MuiChip-label': { fontSize: 10.5 } }} />
+    )}
+  </Box>
+</TableCell>
                       <TableCell sx={{ color: 'text.secondary' }}>{doc.uploadedBy || '—'}</TableCell>
                       <TableCell>
                         <Chip
@@ -389,6 +479,13 @@ export default function Documents() {
                               <RefreshIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
+                          {isAdmin && (
+                            <Tooltip title="Delete">
+                              <IconButton size="small" color="error" onClick={() => { setDeleteTarget(doc); setDeleteOpen(true); }}>
+                                <DeleteOutlineIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>
@@ -423,7 +520,7 @@ export default function Documents() {
           <Box
             sx={{
               border: '2px dashed',
-              borderColor: dragOver ? 'primary.main' : 'grey.300',
+              borderColor: dragOver ? 'primary.main' : 'divider',
               borderRadius: 2,
               p: 4,
               textAlign: 'center',
@@ -446,19 +543,44 @@ export default function Documents() {
               Supported: PDF, DOCX, MD, TXT
             </Typography>
           </Box>
-          <FormControl fullWidth size="small">
-            <InputLabel>Department (optional)</InputLabel>
+          <FormControl fullWidth size="small" error={!!uploadError}>
+            <InputLabel>Department</InputLabel>
             <Select
               value={uploadDeptId}
-              label="Department (optional)"
-              onChange={(e) => setUploadDeptId(e.target.value)}
+              label="Department"
+              onChange={(e) => { setUploadDeptId(e.target.value); setUploadError(''); }}
             >
-              <MenuItem value=""><em>None</em></MenuItem>
-              {departments.map((d) => (
-                <MenuItem key={d.id} value={d.id}>{d.name}</MenuItem>
+              {uploadTree.ordered.map((d) => (
+                <MenuItem key={d.id} value={d.id} sx={{ pl: (uploadTree.depth.get(d.id) ?? 0) * 2 }}>
+                  {d.name}
+                </MenuItem>
               ))}
             </Select>
+            {uploadError && <FormHelperText>{uploadError}</FormHelperText>}
           </FormControl>
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+              Who can see this document?
+            </Typography>
+            {isAdmin ? (
+              <RadioGroup row value={uploadScope} onChange={(e) => setUploadScope(e.target.value)}>
+                <FormControlLabel
+                  value="DEPARTMENT"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">Only {uploadDeptName || 'the department'} and its sub-departments</Typography>}
+                />
+                <FormControlLabel
+                  value="ALL"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">Everyone in the company</Typography>}
+                />
+              </RadioGroup>
+            ) : (
+              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                Visible to {uploadDeptName || 'the selected department'} and its sub-departments.
+              </Typography>
+            )}
+          </Box>
           {uploading && (
             <Box sx={{ mt: 2 }}>
               <Typography variant="body2" sx={{ mb: 0.5 }}>Uploading... {uploadProgress}%</Typography>
@@ -529,7 +651,7 @@ export default function Documents() {
                 {previewData.summary && (
                   <Grid item xs={12}>
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>Summary</Typography>
-                    <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 1, bgcolor: 'grey.50' }}>
+                    <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 1, bgcolor: 'action.hover' }}>
                       <Typography variant="body2">{previewData.summary}</Typography>
                     </Paper>
                   </Grid>
@@ -585,6 +707,21 @@ export default function Documents() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setVersionsOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onClose={() => !deleting && setDeleteOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Document</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Delete <strong>{deleteTarget?.originalFilename || deleteTarget?.title}</strong>? This will permanently remove the document and its chunks. This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteOpen(false)} disabled={deleting}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={confirmDelete} disabled={deleting} startIcon={deleting ? <CircularProgress size={16} /> : null}>
+            {deleting ? 'Deleting...' : 'Delete'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

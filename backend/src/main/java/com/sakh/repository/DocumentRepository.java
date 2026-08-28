@@ -16,8 +16,9 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             "(?1 IS NULL OR d.originalFilename ILIKE %?1%) AND " +
             "(?2 IS NULL OR d.department.name = ?2) AND " +
             "(?3 IS NULL OR d.status = ?3) AND " +
+            "(?4 IS NULL OR d.accessScope = com.sakh.enums.AccessScope.ALL OR d.department.id IN ?4) AND " +
             "d.isLatest = true")
-    Page<Document> findWithFilters(String search, String department, DocumentStatus status, Pageable pageable);
+    Page<Document> findWithFilters(String search, String department, DocumentStatus status, List<Long> departmentIds, Pageable pageable);
 
     List<Document> findByGroupIdOrderByVersionDesc(Long groupId);
 
@@ -34,6 +35,7 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
             "  LOWER(dm.author) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
             "  LOWER(dm.language) LIKE LOWER(CONCAT('%', ?1, '%')) OR " +
             "  EXISTS (SELECT 1 FROM Chunk c WHERE c.document.id = d.id AND LOWER(c.chunkText) LIKE LOWER(CONCAT('%', ?1, '%')))) AND " +
-            "(?2 IS NULL OR d.department.name = ?2)")
-    Page<Document> searchByKeyword(String query, String department, Pageable pageable);
+            "(?2 IS NULL OR d.department.name = ?2) AND " +
+            "(?3 IS NULL OR d.accessScope = com.sakh.enums.AccessScope.ALL OR d.department.id IN ?3)")
+    Page<Document> searchByKeyword(String query, String department, List<Long> departmentIds, Pageable pageable);
 }

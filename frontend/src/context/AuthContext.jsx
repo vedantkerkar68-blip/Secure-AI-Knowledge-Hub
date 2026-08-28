@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
-import { getProfile } from '../services/authService';
+import { getProfile, logout as apiLogout } from '../services/authService';
 import api from '../services/api';
 
 const AuthContext = createContext(null);
@@ -47,6 +47,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
+    apiLogout().catch(() => {});
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setToken(null);

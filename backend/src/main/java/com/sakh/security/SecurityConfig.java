@@ -1,5 +1,6 @@
 package com.sakh.security;
 
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -36,6 +37,14 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex.authenticationEntryPoint((request, response, authException) -> {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json");
+                    response.setCharacterEncoding("UTF-8");
+                    response.getWriter().write("""
+                            {"status":401,"error":"Unauthorized","message":"Authentication required or your session has expired."}
+                            """.trim());
+                }))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/login",
                                 "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**",

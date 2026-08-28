@@ -12,13 +12,13 @@ export default function NotFound() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        bgcolor: '#f5f7fa',
+        bgcolor: 'background.default',
       }}
     >
-      <Typography variant="h1" sx={{ fontWeight: 700, color: '#1565c0', mb: 1 }}>
+      <Typography variant="h1" sx={{ fontWeight: 700, color: 'primary.main', mb: 1 }}>
         404
       </Typography>
-      <Typography variant="h5" sx={{ mb: 1, color: '#333' }}>
+      <Typography variant="h5" sx={{ mb: 1, color: 'text.primary' }}>
         Page Not Found
       </Typography>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>

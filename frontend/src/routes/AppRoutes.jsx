@@ -2,13 +2,8 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import MainLayout from '../components/layout/MainLayout';
 import Login from '../pages/Login';
-import Dashboard from '../pages/Dashboard';
-import Users from '../pages/Users';
-import Departments from '../pages/Departments';
-import Documents from '../pages/Documents';
+import Home from '../pages/Home';
 import Chat from '../pages/Chat';
-import ActivityLogs from '../pages/ActivityLogs';
-import Profile from '../pages/Profile';
 import NotFound from '../pages/NotFound';
 
 function PrivateRoute({ children }) {
@@ -32,13 +27,16 @@ export default function AppRoutes() {
           </PrivateRoute>
         }
       >
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/users" element={<Users />} />
-        <Route path="/departments" element={<Departments />} />
-        <Route path="/documents" element={<Documents />} />
+        <Route path="/dashboard" element={<Home />} />
         <Route path="/chat" element={<Chat />} />
-        <Route path="/activity-logs" element={<ActivityLogs />} />
-        <Route path="/profile" element={<Profile />} />
+        {/* All previous pages are now sections of Home */}
+        <Route path="/documents" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/users" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/departments" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/activity-logs" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/admin" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/admin/overview" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/profile" element={<Navigate to="/dashboard" replace />} />
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<NotFound />} />

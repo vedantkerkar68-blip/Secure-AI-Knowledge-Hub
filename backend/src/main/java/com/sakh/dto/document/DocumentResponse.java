@@ -17,6 +17,8 @@ public class DocumentResponse {
     private final String fileType;
     private final Long fileSize;
     private final String department;
+    private final Long departmentId;
+    private final String accessScope;
     private final String uploadedBy;
     private final Instant uploadedAt;
     private final String status;

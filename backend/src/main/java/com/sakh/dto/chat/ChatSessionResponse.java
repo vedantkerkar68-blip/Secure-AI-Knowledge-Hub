@@ -14,4 +14,5 @@ public class ChatSessionResponse {
     private final Long id;
     private final String title;
     private final Instant createdAt;
+    private final Instant updatedAt;
 }

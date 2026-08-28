@@ -1,12 +1,16 @@
 package com.sakh.rag;
 
 import com.sakh.entity.User;
+import com.sakh.enums.DocumentStatus;
+import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.ChunkRepository;
+import com.sakh.repository.DocumentRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -27,12 +31,14 @@ public class RetrieverService {
 
     private final VectorStore vectorStore;
     private final ChunkRepository chunkRepository;
+    private final DocumentRepository documentRepository;
     private final QueryRewriter queryRewriter;
 
     public RetrieverService(VectorStore vectorStore, ChunkRepository chunkRepository,
-                            QueryRewriter queryRewriter) {
+                            DocumentRepository documentRepository, QueryRewriter queryRewriter) {
         this.vectorStore = vectorStore;
         this.chunkRepository = chunkRepository;
+        this.documentRepository = documentRepository;
         this.queryRewriter = queryRewriter;
     }
 
@@ -85,6 +91,70 @@ public class RetrieverService {
         return merged;
     }
 
+    /**
+     * Retrieves chunks scoped to a single document while still enforcing the
+     * requesting user's access rights. Access is verified at the document level
+     * before any retrieval happens.
+     */
+    public List<Document> retrieve(String question, User user, int topK, Long documentId) {
+        if (documentId == null) {
+            return retrieve(question, user, topK);
+        }
+
+        verifyDocumentAccess(user, documentId);
+
+        long start = System.currentTimeMillis();
+        String rewritten = queryRewriter.rewrite(question);
+
+        String role = user.getRole() != null ? user.getRole().getName() : "";
+        Long departmentId = user.getDepartment() != null ? user.getDepartment().getId() : null;
+
+        logger.info("Scoped retrieval - question: '{}' (rewritten: '{}'), user: {}, document: {}, topK: {}",
+                question, rewritten, user.getEmail(), documentId, topK);
+
+        int fetchSize = topK * HYBRID_MULTIPLIER;
+
+        List<Document> semanticResults = semanticSearch(rewritten, role, departmentId, user.getEmail(), fetchSize, documentId);
+        logger.debug("Scoped semantic search returned {} results", semanticResults.size());
+
+        List<Document> keywordResults = keywordSearchInDocument(rewritten, documentId, fetchSize);
+        logger.debug("Scoped keyword search returned {} results", keywordResults.size());
+
+        List<Document> merged = mergeAndRank(semanticResults, keywordResults, topK);
+
+        long elapsed = System.currentTimeMillis() - start;
+        logger.info("Scoped retrieval returned {} chunks in {}ms", merged.size(), elapsed);
+
+        return merged;
+    }
+
+    private void verifyDocumentAccess(User user, Long documentId) {
+        com.sakh.entity.Document document = documentRepository.findById(documentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + documentId));
+
+        if (document.getStatus() != DocumentStatus.READY) {
+            throw new ResourceNotFoundException("Document is not ready for queries with id: " + documentId);
+        }
+
+        String role = user.getRole() != null ? user.getRole().getName() : "";
+        if ("ADMIN".equals(role)) {
+            return;
+        }
+
+        Long docDeptId = document.getDepartment() != null ? document.getDepartment().getId() : null;
+        Long userDeptId = user.getDepartment() != null ? user.getDepartment().getId() : null;
+
+        boolean sameDepartment = docDeptId != null && docDeptId.equals(userDeptId);
+        boolean ownUpload = "EMPLOYEE".equals(role)
+                && document.getUploadedBy() != null
+                && user.getEmail() != null
+                && document.getUploadedBy().getEmail().equalsIgnoreCase(user.getEmail());
+
+        if (!sameDepartment && !ownUpload) {
+            throw new AccessDeniedException("Access denied to document: " + documentId);
+        }
+    }
+
     private List<Document> semanticSearch(String question, String role, Long departmentId,
                                           String email, int topK) {
         SearchRequest.Builder builder = SearchRequest.builder()
@@ -104,6 +174,26 @@ public class RetrieverService {
         return vectorStore.similaritySearch(builder.build());
     }
 
+    private List<Document> semanticSearch(String question, String role, Long departmentId,
+                                          String email, int topK, Long documentId) {
+        SearchRequest.Builder builder = SearchRequest.builder()
+                .query(question)
+                .topK(topK);
+
+        if (documentId != null) {
+            builder.filterExpression("documentId == " + documentId);
+        } else if (!"ADMIN".equals(role) && departmentId != null) {
+            if ("MANAGER".equals(role) || email == null) {
+                builder.filterExpression("departmentId == " + departmentId);
+            } else {
+                builder.filterExpression("departmentId == " + departmentId
+                        + " || uploadedBy == '" + email.replace("'", "''") + "'");
+            }
+        }
+
+        return vectorStore.similaritySearch(builder.build());
+    }
+
     private List<Document> keywordSearch(String question, String role, Long departmentId,
                                          String email, int topK) {
         List<Object[]> rows = chunkRepository.findKeywordSearchGlobal(question, topK);
@@ -111,38 +201,51 @@ public class RetrieverService {
         List<Document> results = new ArrayList<>();
 
         for (Object[] row : rows) {
-            Long chunkId = ((Number) row[0]).longValue();
-            Long docId = ((Number) row[1]).longValue();
-            Integer chunkIndex = row[2] != null ? ((Number) row[2]).intValue() : 0;
-            String chunkText = row[3] != null ? row[3].toString() : "";
-            Integer pageNumber = row[4] != null ? ((Number) row[4]).intValue() : null;
-            String sectionTitle = row[5] != null ? row[5].toString() : null;
             Long rowDeptId = row[6] != null ? ((Number) row[6]).longValue() : null;
             String uploadedBy = row[7] != null ? row[7].toString() : null;
-            double rank = row[8] != null ? ((Number) row[8]).doubleValue() : 0.0;
 
             if (!isAccessible(role, departmentId, email, rowDeptId, uploadedBy)) {
                 continue;
             }
 
-            Map<String, Object> metadata = new HashMap<>();
-            metadata.put("documentId", docId);
-            metadata.put("chunkId", chunkId);
-            metadata.put("chunkIndex", chunkIndex);
-            if (pageNumber != null) metadata.put("pageNumber", pageNumber);
-            if (sectionTitle != null) metadata.put("sectionTitle", sectionTitle);
-            if (rowDeptId != null) metadata.put("departmentId", rowDeptId);
-            if (uploadedBy != null) metadata.put("uploadedBy", uploadedBy);
-
-            Document doc = Document.builder()
-                    .text(chunkText)
-                    .metadata(metadata)
-                    .score(rank)
-                    .build();
-            results.add(doc);
+            results.add(toKeywordDocument(row));
         }
 
         return results;
+    }
+
+    private List<Document> keywordSearchInDocument(String question, Long documentId, int topK) {
+        List<Object[]> rows = chunkRepository.findKeywordSearchInDocument(question, documentId, topK);
+        return rows.stream()
+                .map(this::toKeywordDocument)
+                .collect(Collectors.toList());
+    }
+
+    private Document toKeywordDocument(Object[] row) {
+        Long chunkId = ((Number) row[0]).longValue();
+        Long docId = ((Number) row[1]).longValue();
+        Integer chunkIndex = row[2] != null ? ((Number) row[2]).intValue() : 0;
+        String chunkText = row[3] != null ? row[3].toString() : "";
+        Integer pageNumber = row[4] != null ? ((Number) row[4]).intValue() : null;
+        String sectionTitle = row[5] != null ? row[5].toString() : null;
+        Long rowDeptId = row[6] != null ? ((Number) row[6]).longValue() : null;
+        String uploadedBy = row[7] != null ? row[7].toString() : null;
+        double rank = row[8] != null ? ((Number) row[8]).doubleValue() : 0.0;
+
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("documentId", docId);
+        metadata.put("chunkId", chunkId);
+        metadata.put("chunkIndex", chunkIndex);
+        if (pageNumber != null) metadata.put("pageNumber", pageNumber);
+        if (sectionTitle != null) metadata.put("sectionTitle", sectionTitle);
+        if (rowDeptId != null) metadata.put("departmentId", rowDeptId);
+        if (uploadedBy != null) metadata.put("uploadedBy", uploadedBy);
+
+        return Document.builder()
+                .text(chunkText)
+                .metadata(metadata)
+                .score(rank)
+                .build();
     }
 
     private boolean isAccessible(String role, Long userDeptId, String email,

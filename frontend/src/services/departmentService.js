@@ -2,6 +2,8 @@ import api from './api';
 
 export const getAll = (params) => api.get('/departments', { params });
 
+export const getUploadOptions = () => api.get('/documents/upload-options');
+
 export const getById = (id) => api.get(`/departments/${id}`);
 
 export const create = (data) => api.post('/departments', data);

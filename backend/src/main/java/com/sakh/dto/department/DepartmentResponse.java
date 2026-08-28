@@ -13,5 +13,6 @@ public class DepartmentResponse {
     private final Long id;
     private final String name;
     private final String description;
+    private final Long parentId;
     private final Instant createdAt;
 }

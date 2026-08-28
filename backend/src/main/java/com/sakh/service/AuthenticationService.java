@@ -8,19 +8,20 @@ import com.sakh.entity.Role;
 import com.sakh.entity.User;
 import com.sakh.enums.ActivityType;
 import com.sakh.enums.UserStatus;
+import com.sakh.exception.AccountNotActiveException;
 import com.sakh.exception.DuplicateResourceException;
 import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.DepartmentRepository;
 import com.sakh.repository.RoleRepository;
 import com.sakh.repository.UserRepository;
 import com.sakh.security.JwtService;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import com.sakh.security.SakhUserDetails;
+import com.sakh.security.TokenRevocationService;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.List;
 
 @Service
 public class AuthenticationService {
@@ -30,6 +31,7 @@ public class AuthenticationService {
     private final DepartmentRepository departmentRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final TokenRevocationService tokenRevocationService;
     private final ActivityLogService activityLogService;
 
     public AuthenticationService(
@@ -38,12 +40,14 @@ public class AuthenticationService {
             DepartmentRepository departmentRepository,
             PasswordEncoder passwordEncoder,
             JwtService jwtService,
+            TokenRevocationService tokenRevocationService,
             ActivityLogService activityLogService) {
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
         this.departmentRepository = departmentRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.tokenRevocationService = tokenRevocationService;
         this.activityLogService = activityLogService;
     }
 
@@ -88,6 +92,10 @@ public class AuthenticationService {
             throw new ResourceNotFoundException("Invalid email or password");
         }
 
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new AccountNotActiveException("Your account is not active. Please contact an administrator.");
+        }
+
         String token = jwtService.generateToken(toUserDetails(user));
 
         activityLogService.log(user, ActivityType.LOGIN, null);
@@ -95,11 +103,47 @@ public class AuthenticationService {
         return new AuthResponse(token, "Bearer", 86400000);
     }
 
+    /**
+     * Revokes the provided token so it can no longer be used.
+     */
+    public void logout(String token, Long userId) {
+        tokenRevocationService.revoke(token, userId, "LOGOUT");
+        userRepository.findById(userId).ifPresent(user ->
+                activityLogService.log(user, ActivityType.LOGOUT, null));
+    }
+
+    /**
+     * Rotates the current access token: revokes the old one and issues a fresh
+     * token with the same expiry window, provided the account is still active.
+     */
+    public AuthResponse refresh(String token) {
+        String email = jwtService.extractUsername(token);
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid token"));
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new AccountNotActiveException("Your account is not active. Please contact an administrator.");
+        }
+
+        String jti = jwtService.extractTokenId(token);
+        if (tokenRevocationService.isRevoked(jti)) {
+            throw new ResourceNotFoundException("Invalid token");
+        }
+
+        if (jwtService.extractExpiration(token).before(new java.util.Date())) {
+            throw new ResourceNotFoundException("Token has expired");
+        }
+
+        tokenRevocationService.revokeJti(jti, user.getId(), "ROTATION");
+
+        String newToken = jwtService.generateToken(toUserDetails(user));
+
+        activityLogService.log(user, ActivityType.LOGIN, null);
+
+        return new AuthResponse(newToken, "Bearer", 86400000);
+    }
+
     private UserDetails toUserDetails(User user) {
-        return org.springframework.security.core.userdetails.User.builder()
-                .username(user.getEmail())
-                .password(user.getPasswordHash())
-                .authorities(List.of(new SimpleGrantedAuthority(user.getRole().getName())))
-                .build();
+        return new SakhUserDetails(user);
     }
 }

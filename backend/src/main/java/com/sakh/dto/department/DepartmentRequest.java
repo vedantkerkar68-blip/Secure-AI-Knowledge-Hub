@@ -20,4 +20,9 @@ public class DepartmentRequest {
     private String name;
 
     private String description;
+
+    /**
+     * Id of the parent department. Null means the department is a root.
+     */
+    private Long parentId;
 }
