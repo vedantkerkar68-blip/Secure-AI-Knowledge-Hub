@@ -61,8 +61,10 @@ pgvector_bytecode.txt
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
 
-# Docs (local only)
-docs/
+# Docs (local only, except screenshots for README)
+docs/*
+!docs/screenshots/
+!docs/screenshots/**
 
 # IDE
 *.swp
