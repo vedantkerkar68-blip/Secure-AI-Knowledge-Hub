@@ -5,12 +5,16 @@ import com.sakh.enums.DocumentStatus;
 import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.ChunkRepository;
 import com.sakh.repository.DocumentRepository;
+import com.sakh.repository.UserRepository;
+import com.sakh.security.DocumentAuthorizationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -32,14 +36,19 @@ public class RetrieverService {
     private final VectorStore vectorStore;
     private final ChunkRepository chunkRepository;
     private final DocumentRepository documentRepository;
+    private final UserRepository userRepository;
     private final QueryRewriter queryRewriter;
+    private final DocumentAuthorizationService authorizationService;
 
     public RetrieverService(VectorStore vectorStore, ChunkRepository chunkRepository,
-                            DocumentRepository documentRepository, QueryRewriter queryRewriter) {
+                            DocumentRepository documentRepository, UserRepository userRepository,
+                            QueryRewriter queryRewriter, DocumentAuthorizationService authorizationService) {
         this.vectorStore = vectorStore;
         this.chunkRepository = chunkRepository;
         this.documentRepository = documentRepository;
+        this.userRepository = userRepository;
         this.queryRewriter = queryRewriter;
+        this.authorizationService = authorizationService;
     }
 
     public List<Document> retrieve(String question, Long departmentId, int topK) {
@@ -83,12 +92,23 @@ public class RetrieverService {
         List<Document> keywordResults = keywordSearch(rewritten, role, departmentId, user.getEmail(), fetchSize);
         logger.debug("Keyword search returned {} results", keywordResults.size());
 
+        // Filter results through centralized authorization
         List<Document> merged = mergeAndRank(semanticResults, keywordResults, topK);
+        List<Document> authorized = merged.stream()
+                .filter(doc -> {
+                    Object docIdObj = doc.getMetadata().get("documentId");
+                    if (docIdObj instanceof Number num) {
+                        return authorizationService.isAccessibleForRag(
+                                documentRepository.findById(num.longValue()).orElse(null), getCurrentUser());
+                    }
+                    return false;
+                })
+                .toList();
 
         long elapsed = System.currentTimeMillis() - start;
-        logger.info("Hybrid retrieval returned {} chunks in {}ms", merged.size(), elapsed);
+        logger.info("Hybrid retrieval returned {} authorized chunks in {}ms", authorized.size(), elapsed);
 
-        return merged;
+        return authorized;
     }
 
     /**
@@ -335,6 +355,18 @@ public class RetrieverService {
             return num.longValue();
         }
         return null;
+    }
+
+private User getCurrentUser() {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        String email;
+        if (principal instanceof UserDetails userDetails) {
+            email = userDetails.getUsername();
+        } else {
+            email = principal.toString();
+        }
+        return userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + email));
     }
 
     private static class Pair {

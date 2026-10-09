@@ -81,7 +81,7 @@ public DocumentService(DocumentRepository documentRepository,
                 .orElseThrow(() -> new ResourceNotFoundException("Department not found with id: " + departmentId));
 
         AccessScope scope = resolveAccessScope(accessScope);
-        validateUploadTarget(currentUser, department, scope);
+        authorizationService.validateUploadTarget(currentUser, department, scope);
 
         String storagePath = storageService.store(file);
 
@@ -521,37 +521,5 @@ private AccessScope resolveAccessScope(String value) {
                 .createdAt(document.getCreatedAt())
                 .updatedAt(document.getUpdatedAt())
                 .build();
-    }
-
-    /**
-     * Validates that the current user can upload to the given department with the given scope.
-     * Throws AccessDeniedException if not allowed.
-     * This mirrors the logic from DocumentAuthorizationService.validateUploadTarget.
-     */
-    private void validateUploadTarget(User user, Department department, AccessScope scope) {
-        String userRole = user.getRole() != null ? user.getRole().getName() : "";
-
-        if ("ADMIN".equals(userRole)) {
-            return;
-        }
-
-        if (!"MANAGER".equals(userRole)) {
-            throw new AccessDeniedException("Only administrators and managers can upload documents");
-        }
-
-        if (scope == AccessScope.ALL) {
-            throw new AccessDeniedException("Only administrators can share documents with everyone");
-        }
-
-        if (user.getDepartment() == null) {
-            throw new AccessDeniedException("Your account is not assigned to a department");
-        }
-
-        List<Long> subtreeIds = departmentService.collectSubtreeIds(
-                departmentService.getAllDepartmentsList(), user.getDepartment().getId());
-        if (!subtreeIds.contains(department.getId())) {
-            throw new AccessDeniedException(
-                    "You can only upload documents to your own department or its sub-departments");
-        }
     }
 }
