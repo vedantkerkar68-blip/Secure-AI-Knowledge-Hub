@@ -21,6 +21,7 @@ import com.sakh.repository.DepartmentRepository;
 import com.sakh.repository.DocumentMetadataRepository;
 import com.sakh.repository.DocumentRepository;
 import com.sakh.repository.UserRepository;
+import com.sakh.security.DocumentAuthorizationService;
 import com.sakh.storage.StorageService;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Page;
@@ -45,15 +46,17 @@ public class DocumentService {
     private final DocumentProcessingService processingService;
     private final ActivityLogService activityLogService;
     private final DepartmentService departmentService;
+    private final DocumentAuthorizationService authorizationService;
 
-    public DocumentService(DocumentRepository documentRepository,
-                           DocumentMetadataRepository documentMetadataRepository,
-                           DepartmentRepository departmentRepository,
-                           UserRepository userRepository,
-                           StorageService storageService,
-                           DocumentProcessingService processingService,
-                           ActivityLogService activityLogService,
-                           DepartmentService departmentService) {
+public DocumentService(DocumentRepository documentRepository,
+                       DocumentMetadataRepository documentMetadataRepository,
+                       DepartmentRepository departmentRepository,
+                       UserRepository userRepository,
+                       StorageService storageService,
+                       DocumentProcessingService processingService,
+                       ActivityLogService activityLogService,
+                       DepartmentService departmentService,
+                       DocumentAuthorizationService authorizationService) {
         this.documentRepository = documentRepository;
         this.documentMetadataRepository = documentMetadataRepository;
         this.departmentRepository = departmentRepository;
@@ -62,6 +65,7 @@ public class DocumentService {
         this.processingService = processingService;
         this.activityLogService = activityLogService;
         this.departmentService = departmentService;
+        this.authorizationService = authorizationService;
     }
 
     public UploadDocumentResponse uploadDocument(MultipartFile file, Long departmentId, String accessScope) {
@@ -146,7 +150,7 @@ public class DocumentService {
         User currentUser = getCurrentUser();
         String userRole = getCurrentUserRole();
 
-        List<Long> allowedDepartmentIds = resolveVisibleDepartmentIds(currentUser, userRole);
+        List<Long> allowedDepartmentIds = authorizationService.resolveVisibleDepartmentIds(currentUser, userRole);
 
         // When visibility is scoped to the department tree, ignore the raw department filter
         // so users can only see documents from their own branch of the tree.
@@ -190,7 +194,7 @@ public class DocumentService {
         User currentUser = getCurrentUser();
         String userRole = getCurrentUserRole();
 
-        List<Long> allowedDepartmentIds = resolveVisibleDepartmentIds(currentUser, userRole);
+        List<Long> allowedDepartmentIds = authorizationService.resolveVisibleDepartmentIds(currentUser, userRole);
 
         DocumentStatus status = "ADMIN".equals(userRole) ? null : DocumentStatus.READY;
 
@@ -316,91 +320,18 @@ public class DocumentService {
 
     private void checkDocumentAccess(Document document) {
         User currentUser = getCurrentUser();
-        String userRole = getCurrentUserRole();
-
-        // ADMIN can access all documents
-        if ("ADMIN".equals(userRole)) {
-            return;
-        }
-
-        // Documents shared with everyone are visible to all authenticated users
-        if (document.getAccessScope() == AccessScope.ALL) {
-            return;
-        }
-
-        if (currentUser.getDepartment() == null || document.getDepartment() == null) {
-            throw new ResourceNotFoundException("Document not found with id: " + document.getId());
-        }
-
-        List<Long> visibleDepartmentIds = collectVisibleDepartmentIds(currentUser);
-        if (!visibleDepartmentIds.contains(document.getDepartment().getId())) {
-            throw new ResourceNotFoundException("Document not found with id: " + document.getId());
-        }
+        authorizationService.checkDocumentViewAccess(document, currentUser);
     }
 
     /**
      * Non-admins may only view documents that have finished processing.
      */
     private void requireReadable(Document document) {
-        if (!"ADMIN".equals(getCurrentUserRole()) && document.getStatus() != DocumentStatus.READY) {
-            throw new ResourceNotFoundException("Document not found with id: " + document.getId());
-        }
+        User currentUser = getCurrentUser();
+        authorizationService.requireReadable(document, currentUser);
     }
 
-    /**
-     * Resolves the department ids a user is allowed to see documents for.
-     * Returns null for admins (no restriction).
-     */
-    private List<Long> resolveVisibleDepartmentIds(User user, String userRole) {
-        if ("ADMIN".equals(userRole)) {
-            return null;
-        }
-        return collectVisibleDepartmentIds(user);
-    }
-
-    /**
-     * Collects the user's department plus all ancestors (documents flow down the tree).
-     */
-    private List<Long> collectVisibleDepartmentIds(User user) {
-        if (user.getDepartment() == null) {
-            return List.of(-1L);
-        }
-        return departmentService.collectAncestorIds(
-                departmentService.getAllDepartmentsList(), user.getDepartment().getId());
-    }
-
-    /**
-     * Validates that the current user is allowed to upload to the given department
-     * with the given access scope.
-     */
-    private void validateUploadTarget(User user, Department department, AccessScope scope) {
-        String userRole = getCurrentUserRole();
-
-        if ("ADMIN".equals(userRole)) {
-            return;
-        }
-
-        if (!"MANAGER".equals(userRole)) {
-            throw new AccessDeniedException("Only administrators and managers can upload documents");
-        }
-
-        if (scope == AccessScope.ALL) {
-            throw new AccessDeniedException("Only administrators can share documents with everyone");
-        }
-
-        if (user.getDepartment() == null) {
-            throw new AccessDeniedException("Your account is not assigned to a department");
-        }
-
-        List<Long> subtreeIds = departmentService.collectSubtreeIds(
-                departmentService.getAllDepartmentsList(), user.getDepartment().getId());
-        if (!subtreeIds.contains(department.getId())) {
-            throw new AccessDeniedException(
-                    "You can only upload documents to your own department or its sub-departments");
-        }
-    }
-
-    private AccessScope resolveAccessScope(String value) {
+private AccessScope resolveAccessScope(String value) {
         if (value == null || value.isBlank()) {
             return AccessScope.DEPARTMENT;
         }
@@ -425,8 +356,7 @@ public class DocumentService {
         }
 
         if ("MANAGER".equals(userRole) && currentUser.getDepartment() != null) {
-            List<Long> subtreeIds = departmentService.collectSubtreeIds(
-                    all, currentUser.getDepartment().getId());
+            List<Long> subtreeIds = authorizationService.getUploadableDepartmentIds(getCurrentUser());
             return all.stream()
                     .filter(d -> subtreeIds.contains(d.getId()))
                     .map(departmentService::toResponse)
@@ -591,5 +521,37 @@ public class DocumentService {
                 .createdAt(document.getCreatedAt())
                 .updatedAt(document.getUpdatedAt())
                 .build();
+    }
+
+    /**
+     * Validates that the current user can upload to the given department with the given scope.
+     * Throws AccessDeniedException if not allowed.
+     * This mirrors the logic from DocumentAuthorizationService.validateUploadTarget.
+     */
+    private void validateUploadTarget(User user, Department department, AccessScope scope) {
+        String userRole = user.getRole() != null ? user.getRole().getName() : "";
+
+        if ("ADMIN".equals(userRole)) {
+            return;
+        }
+
+        if (!"MANAGER".equals(userRole)) {
+            throw new AccessDeniedException("Only administrators and managers can upload documents");
+        }
+
+        if (scope == AccessScope.ALL) {
+            throw new AccessDeniedException("Only administrators can share documents with everyone");
+        }
+
+        if (user.getDepartment() == null) {
+            throw new AccessDeniedException("Your account is not assigned to a department");
+        }
+
+        List<Long> subtreeIds = departmentService.collectSubtreeIds(
+                departmentService.getAllDepartmentsList(), user.getDepartment().getId());
+        if (!subtreeIds.contains(department.getId())) {
+            throw new AccessDeniedException(
+                    "You can only upload documents to your own department or its sub-departments");
+        }
     }
 }
