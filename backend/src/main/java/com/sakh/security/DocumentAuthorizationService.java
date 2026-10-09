@@ -150,6 +150,10 @@ public class DocumentAuthorizationService {
      * Returns true if accessible, false otherwise.
      */
     public boolean isAccessibleForRag(Document document, User user) {
+        if (document == null) {
+            return false;
+        }
+
         String userRole = user.getRole() != null ? user.getRole().getName() : "";
 
         // ADMIN can access all
@@ -157,8 +161,11 @@ public class DocumentAuthorizationService {
             return true;
         }
 
-        // accessScope = ALL is visible to all authenticated users
+        // accessScope = ALL is visible to all authenticated users, but still requires READY status
         if (document.getAccessScope() == AccessScope.ALL) {
+            if (document.getStatus() != DocumentStatus.READY) {
+                return false;
+            }
             return true;
         }
 

@@ -142,10 +142,22 @@ public class RetrieverService {
 
         List<Document> merged = mergeAndRank(semanticResults, keywordResults, topK);
 
-        long elapsed = System.currentTimeMillis() - start;
-        logger.info("Scoped retrieval returned {} chunks in {}ms", merged.size(), elapsed);
+        // Apply final centralized authorization filter to ensure no unauthorized chunks reach LLM
+        List<Document> authorized = merged.stream()
+                .filter(doc -> {
+                    Object docIdObj = doc.getMetadata().get("documentId");
+                    if (docIdObj instanceof Number num) {
+                        return authorizationService.isAccessibleForRag(
+                                documentRepository.findById(num.longValue()).orElse(null), user);
+                    }
+                    return false;
+                })
+                .toList();
 
-        return merged;
+        long elapsed = System.currentTimeMillis() - start;
+        logger.info("Scoped retrieval returned {} authorized chunks in {}ms", authorized.size(), elapsed);
+
+        return authorized;
     }
 
     private void verifyDocumentAccess(User user, Long documentId) {
