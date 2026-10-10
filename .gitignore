@@ -61,10 +61,11 @@ pgvector_bytecode.txt
 backend/storage/uploads/*
 !backend/storage/uploads/.gitkeep
 
-# Docs (local only, except screenshots for README)
+# Docs (local only, except screenshots for README and the authoritative access-control policy)
 docs/*
 !docs/screenshots/
 !docs/screenshots/**
+!docs/07_ACCESS_CONTROL_POLICY.md
 
 # IDE
 *.swp
