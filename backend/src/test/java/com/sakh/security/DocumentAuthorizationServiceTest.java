@@ -150,23 +150,65 @@ class DocumentAuthorizationServiceTest {
         assertFalse(authorizationService.isAccessibleForRag(null, employee));
     }
 
-    // H. ADMIN behavior: matches the documented policy
+    // H. ADMIN + READY: allowed regardless of department or access scope
     @Test
-    void isAccessibleForRag_admin_alwaysAllowed() {
-        Document docNotReady = createDocument(AccessScope.DEPARTMENT, DocumentStatus.PENDING, deptB, employee);
-        Document docUnrelated = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptB, employee);
-        Document docAll = createDocument(AccessScope.ALL, DocumentStatus.PENDING, deptB, employee);
+    void isAccessibleForRag_admin_readyDocument_allowed() {
+        Document deptScoped = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptB, employee);
+        Document unrelated = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptB, employee);
+        Document shared = createDocument(AccessScope.ALL, DocumentStatus.READY, deptB, employee);
 
-        assertTrue(authorizationService.isAccessibleForRag(docNotReady, admin));
-        assertTrue(authorizationService.isAccessibleForRag(docUnrelated, admin));
-        assertTrue(authorizationService.isAccessibleForRag(docAll, admin));
+        assertTrue(authorizationService.isAccessibleForRag(deptScoped, admin));
+        assertTrue(authorizationService.isAccessibleForRag(unrelated, admin));
+        assertTrue(authorizationService.isAccessibleForRag(shared, admin));
     }
 
-    // I. ADMIN + accessScope=ALL + non-READY: allowed (admin bypasses readiness)
+    // H2. ADMIN + non-READY: denied. No role bypasses RAG document readiness.
     @Test
-    void isAccessibleForRag_admin_accessScopeAll_notReady_allowed() {
-        Document doc = createDocument(AccessScope.ALL, DocumentStatus.PENDING, deptB, employee);
-        assertTrue(authorizationService.isAccessibleForRag(doc, admin));
+    void isAccessibleForRag_admin_nonReadyDocument_denied() {
+        for (DocumentStatus status : List.of(DocumentStatus.PENDING,
+                DocumentStatus.PROCESSING,
+                DocumentStatus.FAILED,
+                DocumentStatus.ARCHIVED)) {
+            Document deptScoped = createDocument(AccessScope.DEPARTMENT, status, deptB, employee);
+            assertFalse(authorizationService.isAccessibleForRag(deptScoped, admin),
+                    "ADMIN must not retrieve a " + status + " document through RAG");
+        }
+    }
+
+    // I. ADMIN + accessScope=ALL + non-READY: denied. Sharing never bypasses readiness.
+    @Test
+    void isAccessibleForRag_admin_accessScopeAll_notReady_denied() {
+        for (DocumentStatus status : List.of(DocumentStatus.PENDING,
+                DocumentStatus.PROCESSING,
+                DocumentStatus.FAILED)) {
+            Document doc = createDocument(AccessScope.ALL, status, deptB, employee);
+            assertFalse(authorizationService.isAccessibleForRag(doc, admin),
+                    "A shared " + status + " document must not reach the prompt, even for ADMIN");
+        }
+        Document readyShared = createDocument(AccessScope.ALL, DocumentStatus.READY, deptB, employee);
+        assertTrue(authorizationService.isAccessibleForRag(readyShared, admin),
+                "A READY shared document remains available to ADMIN");
+    }
+
+    // I2. ADMIN document-management capabilities are NOT restricted by the RAG readiness rule.
+    // requireReadable deliberately still exempts ADMIN so preview/details/versions/download
+    // and status inspection keep working for documents that are not yet READY.
+    @Test
+    void requireReadable_admin_canStillManageNonReadyDocuments() {
+        for (DocumentStatus status : List.of(DocumentStatus.PENDING,
+                DocumentStatus.PROCESSING,
+                DocumentStatus.FAILED)) {
+            Document doc = createDocument(AccessScope.DEPARTMENT, status, deptB, employee);
+
+            assertDoesNotThrow(() -> authorizationService.requireReadable(doc, admin),
+                    "ADMIN must retain document-management access to a " + status + " document");
+            assertDoesNotThrow(() -> authorizationService.checkDocumentViewAccess(doc, admin),
+                    "ADMIN must retain view access to a " + status + " document");
+
+            // ...while the same document is still ineligible for the LLM.
+            assertFalse(authorizationService.isAccessibleForRag(doc, admin),
+                    "A " + status + " document must remain ineligible for RAG even for ADMIN");
+        }
     }
 
     // J. Employee in ancestor department can see ancestor's documents

@@ -26,8 +26,10 @@ import org.springframework.ai.vectorstore.VectorStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,6 +37,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -300,6 +303,92 @@ class RetrieverServiceTest {
             assertEquals(ready.getId(), ((Number) d.getMetadata().get("documentId")).longValue(),
                     "Only the READY, authorized document may appear: " + results);
         }
+    }
+
+    /**
+ * Global retrieval must not deliver a non-READY document's chunks to the prompt,
+ * including for ADMIN. The centralized isAccessibleForRag check is the authority.
+ */
+@Test
+    void retrieve_adminNonReadyDocument_isNotDeliveredGlobally() {
+        User admin = user("admin@sakh.com", "ADMIN", CHILD_DEPT_ID);
+
+        com.sakh.entity.Document processing = entityDocument(920L, UNRELATED_DEPT_ID, AccessScope.ALL,
+                DocumentStatus.PROCESSING, "owner@sakh.com");
+
+        stubSemantic(processing.getId());
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(List.of());
+        when(documentRepository.findAllById(any())).thenReturn(List.of(processing));
+
+        assertTrue(retriever.retrieve("policy", admin, 5).isEmpty(),
+                "A PROCESSING document must not reach the prompt via global retrieval, even for ADMIN");
+    }
+
+    /**
+     * Document-scoped retrieval must apply the same authoritative policy. verifyDocumentAccess
+     * deliberately still lets ADMIN through checkDocumentViewAccess and requireReadable, so the
+     * final isAccessibleForRag check is what must stop the non-READY content.
+     */
+    @Test
+    void retrieve_adminNonReadyDocument_isNotDeliveredWhenScoped() {
+        User admin = user("admin@sakh.com", "ADMIN", CHILD_DEPT_ID);
+        Long docId = 930L;
+
+        com.sakh.entity.Document failed = entityDocument(docId, UNRELATED_DEPT_ID, AccessScope.DEPARTMENT,
+                DocumentStatus.FAILED, "owner@sakh.com");
+
+        when(documentRepository.findById(docId)).thenReturn(Optional.of(failed));
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                Document.builder()
+                        .text("scoped chunk")
+                        .metadata(java.util.Map.of("chunkId", 1L, "documentId", docId))
+                        .score(0.9)
+                        .build()));
+        when(chunkRepository.findKeywordSearchInDocument(anyString(), anyLong(), anyInt()))
+                .thenReturn(List.<Object[]>of(new Object[]{
+                        1L, docId, 0, "scoped keyword chunk", 1, "Section",
+                        UNRELATED_DEPT_ID, "owner@sakh.com", "DEPARTMENT", 1.0d
+                }));
+
+        assertTrue(retriever.retrieve("policy", admin, 5, docId).isEmpty(),
+                "A FAILED document must not reach the prompt via scoped retrieval, even for ADMIN");
+    }
+
+    /** Global and scoped retrieval must agree on the same authoritative decision. */
+    @Test
+    void retrieve_readyDocument_isDeliveredBothGloballyAndWhenScoped() {
+        User admin = user("admin@sakh.com", "ADMIN", CHILD_DEPT_ID);
+        Long docId = 940L;
+
+        com.sakh.entity.Document ready = entityDocument(docId, UNRELATED_DEPT_ID, AccessScope.ALL,
+                DocumentStatus.READY, "owner@sakh.com");
+
+        when(documentRepository.findById(docId)).thenReturn(Optional.of(ready));
+        when(documentRepository.findAllById(any())).thenReturn(List.of(ready));
+
+        // Global path
+        stubSemantic(docId);
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(List.of());
+        assertFalse(retriever.retrieve("policy", admin, 5).isEmpty(),
+                "A READY document must be retrievable globally for ADMIN");
+
+        // Scoped path
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                Document.builder()
+                        .text("scoped chunk")
+                        .metadata(java.util.Map.of("chunkId", 1L, "documentId", docId))
+                        .score(0.9)
+                        .build()));
+        when(chunkRepository.findKeywordSearchInDocument(anyString(), anyLong(), anyInt()))
+                .thenReturn(List.<Object[]>of(new Object[]{
+                        2L, docId, 0, "scoped keyword chunk", 1, "Section",
+                        UNRELATED_DEPT_ID, "owner@sakh.com", "ALL", 1.0d
+                }));
+
+        assertFalse(retriever.retrieve("policy", admin, 5, docId).isEmpty(),
+                "A READY document must be retrievable when scoped, for ADMIN");
     }
 
     private static Document chunkDoc(Long chunkId, Long documentId, double score) {

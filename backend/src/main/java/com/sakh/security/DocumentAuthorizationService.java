@@ -153,32 +153,42 @@ public class DocumentAuthorizationService {
 
     /**
      * Checks if a document is accessible for RAG retrieval (LLM_CAN_PROCESS).
-     * For Phase 2, LLM_CAN_PROCESS = USER_CAN_VIEW.
-     * Returns true if accessible, false otherwise.
+     * For Phase 2, LLM_CAN_PROCESS = USER_CAN_VIEW, with one additional and
+     * unconditional constraint: the document must be READY.
+     *
+     * <p>Readiness is checked before any role or scope decision, so it applies to
+     * every role including ADMIN, and to every access scope including
+     * {@link AccessScope#ALL}. Sharing a document with everyone makes it visible;
+     * it never makes incomplete or failed content eligible for the LLM.
+     *
+     * <p>This deliberately does NOT affect {@link #requireReadable}, which continues to
+     * exempt ADMIN so that document management (preview, details, versions, download,
+     * status inspection) still works for documents that are not yet READY. Management
+     * permission and LLM-processing eligibility are deliberately separate.
+     *
+     * @return {@code true} only for a READY document the user may access; {@code false}
+     *         for a null document or any non-READY document
      */
     public boolean isAccessibleForRag(Document document, User user) {
         if (document == null) {
             return false;
         }
 
+        // LLM processing eligibility: no role bypasses document readiness.
+        if (document.getStatus() != DocumentStatus.READY) {
+            return false;
+        }
+
         String userRole = user.getRole() != null ? user.getRole().getName() : "";
 
-        // ADMIN can access all
+        // ADMIN can access every READY document, regardless of department or scope
         if ("ADMIN".equals(userRole)) {
             return true;
         }
 
-        // accessScope = ALL is visible to all authenticated users, but still requires READY status
+        // accessScope = ALL is visible to all authenticated users (readiness already enforced above)
         if (document.getAccessScope() == AccessScope.ALL) {
-            if (document.getStatus() != DocumentStatus.READY) {
-                return false;
-            }
             return true;
-        }
-
-        // Non-admins may only access READY documents
-        if (document.getStatus() != DocumentStatus.READY) {
-            return false;
         }
 
         // Document must have a department for department-scoped access
