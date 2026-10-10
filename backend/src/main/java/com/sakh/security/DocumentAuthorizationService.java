@@ -50,6 +50,11 @@ public class DocumentAuthorizationService {
             return;
         }
 
+        // Non-admins need department membership for department-scoped documents
+        if (document.getDepartment() == null) {
+            throw new ResourceNotFoundException("Document not found");
+        }
+
         // Check department visibility: own department + ancestors
         List<Long> visibleDepartmentIds = getVisibleDepartmentIds(currentUser);
         if (!visibleDepartmentIds.contains(document.getDepartment().getId())) {
@@ -173,6 +178,11 @@ public class DocumentAuthorizationService {
 
         // Non-admins may only access READY documents
         if (document.getStatus() != DocumentStatus.READY) {
+            return false;
+        }
+
+        // Document must have a department for department-scoped access
+        if (document.getDepartment() == null) {
             return false;
         }
 

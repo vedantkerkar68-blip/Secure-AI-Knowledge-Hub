@@ -239,6 +239,36 @@ class DocumentAuthorizationServiceTest {
         });
     }
 
+    // S. checkDocumentViewAccess - document with null department is denied
+    @Test
+    void checkDocumentViewAccess_nullDocumentDepartment_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, null, employee);
+        assertThrows(ResourceNotFoundException.class, () -> {
+            authorizationService.checkDocumentViewAccess(doc, employee);
+        });
+    }
+
+    // T. isAccessibleForRag - document with null department is denied
+    @Test
+    void isAccessibleForRag_nullDocumentDepartment_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, null, employee);
+        assertFalse(authorizationService.isAccessibleForRag(doc, employee));
+    }
+
+    // U. EMPLOYEE with no department cannot access document with null department
+    @Test
+    void isAccessibleForRag_employeeNoDept_nullDocDepartment_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, null, employee);
+        assertFalse(authorizationService.isAccessibleForRag(doc, employeeNoDept));
+    }
+
+    // V. isAccessibleForRag - EMPLOYEE with department cannot access null-department doc they don't own
+    @Test
+    void isAccessibleForRag_employeeWithDept_nullDocDepartmentOtherUser_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, null, employee);
+        assertFalse(authorizationService.isAccessibleForRag(doc, employee));
+    }
+
     private Document createDocument(AccessScope scope, DocumentStatus status, Department dept, User uploadedBy) {
         Document doc = new Document();
         doc.setId(999L);
