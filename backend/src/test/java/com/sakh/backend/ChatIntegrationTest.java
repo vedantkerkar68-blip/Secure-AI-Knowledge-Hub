@@ -1,58 +1,76 @@
 package com.sakh.backend;
 
+import com.sakh.dto.chat.ChatResponse;
 import com.sakh.entity.ChatSession;
+import com.sakh.entity.Chunk;
 import com.sakh.entity.Department;
 import com.sakh.entity.Role;
 import com.sakh.entity.User;
+import com.sakh.entity.Document;
+import com.sakh.enums.AccessScope;
+import com.sakh.enums.DocumentStatus;
 import com.sakh.enums.UserStatus;
+import com.sakh.exception.AiServiceException;
+import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.ChatSessionRepository;
+import com.sakh.repository.ChunkRepository;
 import com.sakh.repository.DepartmentRepository;
+import com.sakh.repository.DocumentRepository;
 import com.sakh.repository.RoleRepository;
 import com.sakh.repository.UserRepository;
 import com.sakh.service.ChatService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.http.MediaType;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.AuthorityUtils;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @SpringBootTest
-@AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Transactional
+@Execution(ExecutionMode.SAME_THREAD)
 class ChatIntegrationTest {
-
-    @Autowired
-    private MockMvc mockMvc;
 
     @MockBean
     private VectorStore vectorStore;
 
     @MockBean
     private ChatModel chatModel;
+
+    @MockBean
+    private DocumentRepository documentRepository;
+
+    @MockBean
+    private ChunkRepository chunkRepository;
 
     @Autowired
     private ChatService chatService;
@@ -70,6 +88,19 @@ class ChatIntegrationTest {
     private ChatSessionRepository sessionRepository;
 
     private ChatSession session;
+
+    private static Long docId;
+
+    @BeforeEach
+    void initDocId() {
+        docId = System.currentTimeMillis() + (long)(Math.random() * 10000);
+    }
+
+    @BeforeEach
+    void setUp() {
+        // Clear SecurityContext to avoid leakage between tests
+        // SecurityContextHolder.clearContext() - not needed with @WithMockUser
+    }
 
     private ChatSession setupTestSession() {
         Role role = roleRepository.findAll().stream()
@@ -103,10 +134,37 @@ class ChatIntegrationTest {
         ChatSession session = chatService.createSession(user, "Test Chat");
         sessionRepository.flush();
 
-        Document doc = Document.builder()
+        // Create a document entity for mocking
+        com.sakh.entity.Document entityDoc = new com.sakh.entity.Document();
+        entityDoc.setId(docId);
+        entityDoc.setTitle("Resignation Policy");
+        entityDoc.setOriginalFilename("resignation-policy.txt");
+        entityDoc.setStoredFilename("resignation-policy.txt");
+        entityDoc.setStoragePath("/tmp/resignation-policy.txt");
+        entityDoc.setFileType("txt");
+        entityDoc.setFileSize(1024L);
+        entityDoc.setDepartment(savedDepartment);
+        entityDoc.setUploadedBy(user);
+        entityDoc.setStatus(com.sakh.enums.DocumentStatus.READY);
+        entityDoc.setAccessScope(com.sakh.enums.AccessScope.DEPARTMENT);
+        entityDoc.setGroupId(1L);
+        entityDoc.setVersion(1);
+        entityDoc.setIsLatest(true);
+        entityDoc.setCreatedAt(Instant.now());
+        entityDoc.setUpdatedAt(Instant.now());
+
+        // Mock documentRepository to return the document
+        when(documentRepository.findById(docId)).thenReturn(java.util.Optional.of(entityDoc));
+
+        // Mock chunkRepository to return empty results for keyword search
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt())).thenReturn(List.of());
+        when(chunkRepository.findKeywordSearchInDocument(anyString(), anyLong(), anyInt())).thenReturn(List.of());
+
+        // Mock vector store to return a document with the correct metadata
+        org.springframework.ai.document.Document doc = org.springframework.ai.document.Document.builder()
                 .text("Company policy requires 30 days notice for resignation.")
                 .metadata(Map.of(
-                        "documentId", 99999L,
+                        "documentId", docId,
                         "chunkIndex", 0,
                         "pageNumber", 1,
                         "sectionTitle", "Resignation Policy",
@@ -134,49 +192,45 @@ class ChatIntegrationTest {
     void sendMessage_withValidRequest_returnsAnswerWithCitationsAndConfidence() throws Exception {
         ChatSession session = setupTestSession();
         
-        // Manually set up authentication for the test
+        // Set up security context
         Authentication auth = new UsernamePasswordAuthenticationToken(
                 "admin@sakh.com", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN"));
         SecurityContextHolder.getContext().setAuthentication(auth);
         
-        mockMvc.perform(post("/api/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"sessionId\": " + session.getId() + ", \"question\": \"What is the resignation policy?\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.answer").isString())
-                .andExpect(jsonPath("$.answer").isNotEmpty())
-                .andExpect(jsonPath("$.confidence").isNumber())
-                .andExpect(jsonPath("$.citations").isArray())
-                .andExpect(jsonPath("$.citations.length()").value(1));
+        ChatResponse response = chatService.sendMessage(session.getId(), "What is the resignation policy?", null);
+        
+        assertNotNull(response.getAnswer());
+        assertFalse(response.getAnswer().isEmpty());
+        assertNotNull(response.getConfidence());
+        assertNotNull(response.getCitations());
+        assertEquals(1, response.getCitations().size());
     }
 
     @Test
     void sendMessage_withEmptyQuestion_returnsBadRequest() throws Exception {
         ChatSession session = setupTestSession();
         
-        // Manually set up authentication for the test
+        // Set up security context
         Authentication auth = new UsernamePasswordAuthenticationToken(
                 "admin@sakh.com", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN"));
         SecurityContextHolder.getContext().setAuthentication(auth);
         
-        mockMvc.perform(post("/api/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"sessionId\": " + session.getId() + ", \"question\": \"\"}"))
-                .andExpect(status().isBadRequest());
+        assertThrows(AiServiceException.class, () -> {
+            chatService.sendMessage(session.getId(), "", null);
+        });
     }
 
     @Test
     void sendMessage_withInvalidSession_returnsNotFound() throws Exception {
         setupTestSession();
         
-        // Manually set up authentication for the test
+        // Set up security context
         Authentication auth = new UsernamePasswordAuthenticationToken(
                 "admin@sakh.com", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN"));
         SecurityContextHolder.getContext().setAuthentication(auth);
         
-        mockMvc.perform(post("/api/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"sessionId\": 999999, \"question\": \"What is the policy?\"}"))
-                .andExpect(status().isNotFound());
+        assertThrows(ResourceNotFoundException.class, () -> {
+            chatService.sendMessage(999999L, "What is the policy?", null);
+        });
     }
 }

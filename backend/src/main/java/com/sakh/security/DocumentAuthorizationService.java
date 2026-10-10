@@ -58,6 +58,13 @@ public class DocumentAuthorizationService {
         // Check department visibility: own department + ancestors
         List<Long> visibleDepartmentIds = getVisibleDepartmentIds(currentUser);
         if (!visibleDepartmentIds.contains(document.getDepartment().getId())) {
+            // Department visibility failed - but EMPLOYEE can still see their own uploads
+            if ("EMPLOYEE".equals(userRole)
+                    && document.getUploadedBy() != null
+                    && currentUser.getEmail() != null
+                    && document.getUploadedBy().getEmail().equalsIgnoreCase(currentUser.getEmail())) {
+                return;
+            }
             throw new ResourceNotFoundException("Document not found");
         }
     }
