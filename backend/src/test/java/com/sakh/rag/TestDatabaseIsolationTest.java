@@ -49,11 +49,16 @@ class TestDatabaseIsolationTest {
     }
 
     /**
-     * The vector store writes to the test schema, and the shared development
-     * schema is left byte-for-byte untouched.
+     * The vector store writes to the test schema, and - when the shared development
+     * schema has a {@code vector_store} table - the number of rows in it is unchanged
+     * by the write.
+     *
+     * <p>This is a row-count comparison, not a content comparison: it proves no row was
+     * added or removed, not that existing rows were left byte-for-byte identical. An
+     * in-place update to an existing development row would not be detected here.
      */
     @Test
-    void vectorWritesLandInTheTestSchemaAndNeverInTheDevelopmentSchema() {
+    void vectorWritesLandInTheTestSchemaAndDoNotChangeTheDevelopmentSchemaRowCount() {
         float[] embedding = new float[3072];
         for (int i = 0; i < embedding.length; i++) {
             embedding[i] = 0.01f;

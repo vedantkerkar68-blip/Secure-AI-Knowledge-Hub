@@ -12,9 +12,12 @@ import org.springframework.context.ConfigurableApplicationContext;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Properties;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -183,35 +186,82 @@ class TestDatabaseConfigDataOrderingTest {
     static class GuardProbeApp {
     }
 
-    /** The guard must be wired through spring.factories, which is how Boot discovers it. */
+    /**
+     * The guard must be wired through spring.factories, which is how Boot discovers it.
+     *
+     * <p>Declaring the class name somewhere in the file is not enough: Spring Boot only
+     * instantiates a post-processor when the class is listed as a value of the
+     * {@code org.springframework.boot.env.EnvironmentPostProcessor} key. This reads each
+     * resource as a properties file and inspects that exact key.
+     */
     @Test
     void guardIsDeclaredUnderTheEnvironmentPostProcessorFactoryKey() throws Exception {
-        String guardClassName = TestDatabaseSafetyEnvironmentPostProcessor.class.getName();
         String factoryKey = "org.springframework.boot.env.EnvironmentPostProcessor";
+        String guardClassName = TestDatabaseSafetyEnvironmentPostProcessor.class.getName();
 
-        var declarations = new ArrayList<String>();
+        var inspected = new ArrayList<String>();
+        boolean registered = false;
+
         var loader = getClass().getClassLoader();
         var resources = loader.getResources("META-INF/spring.factories");
         while (resources.hasMoreElements()) {
             var url = resources.nextElement();
+            Properties properties = new Properties();
             try (var in = url.openStream()) {
-                String content = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                if (content.contains(guardClassName)) {
-                    declarations.add(url + " -> " + content.strip());
-                }
+                // Properties.load() also resolves the '\' line continuations that
+                // spring.factories conventionally uses for long class lists.
+                properties.load(in);
+            }
+            String value = properties.getProperty(factoryKey);
+            inspected.add(url + " -> '" + factoryKey + "=" + value + "'");
+            if (isRegisteredUnderKey(properties, factoryKey, guardClassName)) {
+                registered = true;
             }
         }
 
-        assertTrue(!declarations.isEmpty(),
-                "The guard must be declared in a META-INF/spring.factories file, but found: " + declarations);
+        assertTrue(registered,
+                "The guard must be registered as a value of the '" + factoryKey
+                        + "' key in some META-INF/spring.factories. Inspected: " + inspected);
+    }
 
-        // Declaring the class name is not enough: Spring Boot only instantiates it when it
-        // is listed under the EnvironmentPostProcessor factory key.
-        for (String declaration : declarations) {
-            assertTrue(declaration.contains(factoryKey),
-                    "The guard must be declared under the '" + factoryKey
-                            + "' factory key, but the declaration was: " + declaration);
+    /**
+     * Whether {@code className} appears among the comma-separated values registered for
+     * exactly {@code factoryKey}. Registration under any other key does not count.
+     */
+    static boolean isRegisteredUnderKey(Properties properties, String factoryKey, String className) {
+        String value = properties.getProperty(factoryKey);
+        if (value == null) {
+            return false;
         }
+        return Arrays.stream(value.split(","))
+                .map(String::trim)
+                .filter(entry -> !entry.isEmpty())
+                .anyMatch(entry -> entry.equals(className));
+    }
+
+    /**
+     * Fixture-based proof that the check above is not satisfied by an unrelated key: a
+     * guard class registered solely under a different factory key must not be accepted.
+     */
+    @Test
+    void guardRegisteredOnlyUnderAnUnrelatedKey_isNotAccepted() {
+        String factoryKey = "org.springframework.boot.env.EnvironmentPostProcessor";
+        String guardClassName = TestDatabaseSafetyEnvironmentPostProcessor.class.getName();
+
+        Properties unrelatedKey = new Properties();
+        unrelatedKey.setProperty("com.example.SomeOtherFactory", guardClassName);
+        assertFalse(isRegisteredUnderKey(unrelatedKey, factoryKey, guardClassName),
+                "Registration under an unrelated key must not satisfy the EnvironmentPostProcessor key");
+
+        Properties keyWithOtherValues = new Properties();
+        keyWithOtherValues.setProperty(factoryKey, "com.example.A, com.example.B");
+        assertFalse(isRegisteredUnderKey(keyWithOtherValues, factoryKey, guardClassName),
+                "Similar but distinct class names must not be accepted");
+
+        Properties correct = new Properties();
+        correct.setProperty(factoryKey, "com.example.A, " + guardClassName + " , com.example.B");
+        assertTrue(isRegisteredUnderKey(correct, factoryKey, guardClassName),
+                "The guard listed among several values of the exact key must be accepted");
     }
 
     private static void assertFalseInStack(Throwable throwable, String packagePrefix, String message) {
