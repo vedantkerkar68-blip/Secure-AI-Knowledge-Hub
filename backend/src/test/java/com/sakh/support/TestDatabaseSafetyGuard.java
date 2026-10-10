@@ -74,11 +74,22 @@ public final class TestDatabaseSafetyGuard {
      * @param jdbcUrl          the resolved {@code spring.datasource.url}
      * @param allowedHosts     comma-separated host allow-list, or {@code null} for the default
      * @param allowedDatabases comma-separated database allow-list, or {@code null} for the default
+     * @param testProfileActive whether the {@code test} profile is active. When it is, a missing
+     *                          URL is a misconfiguration and is rejected rather than skipped, so a
+     *                          full test application cannot silently bypass the guard.
      * @throws IllegalStateException if the URL does not identify an approved test database
      */
-    public static void validate(String jdbcUrl, String allowedHosts, String allowedDatabases) {
+    public static void validate(String jdbcUrl, String allowedHosts, String allowedDatabases,
+                                boolean testProfileActive) {
         if (jdbcUrl == null || jdbcUrl.isBlank()) {
-            // No datasource configured (e.g. a web slice test). Nothing to validate.
+            if (testProfileActive) {
+                throw reject(String.valueOf(jdbcUrl),
+                        "the 'test' profile is active but spring.datasource.url resolved to nothing."
+                                + " Refusing to start, because an unvalidated datasource is exactly the"
+                                + " bypass this guard exists to prevent."
+                                + " application-test.yml must define spring.datasource.url.");
+            }
+            // No datasource configured and no test profile: nothing to validate.
             return;
         }
 
