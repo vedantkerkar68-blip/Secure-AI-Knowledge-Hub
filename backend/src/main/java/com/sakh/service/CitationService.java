@@ -17,13 +17,26 @@ public class CitationService {
         this.documentRepository = documentRepository;
     }
 
-    public List<CitationDTO> createCitations(List<Document> documents) {
+/**
+     * Builds citations for the documents supplied to a prompt.
+     *
+     * <p>{@code viewerRole} decides whether owning-department metadata may be disclosed.
+     * GUEST may only ever retrieve public/shared knowledge, and the access-control policy
+     * does not establish that a document's owning department is itself public information,
+     * so the department is redacted for that role. Every other role keeps the existing
+     * behaviour unchanged.
+     *
+     * <p>The caller must already have authorized the documents; this method does not
+     * perform access control.
+     */
+    public List<CitationDTO> createCitations(List<Document> documents, String viewerRole) {
+        boolean redactDepartment = "GUEST".equals(viewerRole);
         return documents.stream()
-                .map(this::toCitation)
+                .map(doc -> toCitation(doc, redactDepartment))
                 .toList();
     }
 
-    private CitationDTO toCitation(Document doc) {
+    private CitationDTO toCitation(Document doc, boolean redactDepartment) {
         Object docIdObj = doc.getMetadata().get("documentId");
         Long documentId = docIdObj instanceof Number num ? num.longValue() : null;
 
@@ -37,7 +50,7 @@ public class CitationService {
 
         String title = entity != null && entity.getTitle() != null ? entity.getTitle() : "Unknown";
         Integer version = entity != null ? entity.getVersion() : null;
-        String department = entity != null && entity.getDepartment() != null
+        String department = (!redactDepartment && entity != null && entity.getDepartment() != null)
                 ? entity.getDepartment().getName() : null;
 
         return CitationDTO.builder()

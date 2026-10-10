@@ -50,6 +50,13 @@ public class DocumentAuthorizationService {
             return;
         }
 
+        // GUEST is restricted to public/shared knowledge only. It must not reach any
+        // department-scoped document, regardless of department membership, hierarchy
+        // position, or uploader identity.
+        if (isGuest(userRole)) {
+            throw new ResourceNotFoundException("Document not found");
+        }
+
         // Non-admins need department membership for department-scoped documents
         if (document.getDepartment() == null) {
             throw new ResourceNotFoundException("Document not found");
@@ -67,6 +74,15 @@ public class DocumentAuthorizationService {
             }
             throw new ResourceNotFoundException("Document not found");
         }
+    }
+
+    /**
+     * GUEST is limited to public/shared knowledge: {@link AccessScope#ALL} only.
+     * It never receives department-scoped access, so the department branch below is
+     * never reached for this role.
+     */
+    private static boolean isGuest(String userRole) {
+        return "GUEST".equals(userRole);
     }
 
     /**
@@ -192,6 +208,13 @@ public class DocumentAuthorizationService {
         // accessScope = ALL is visible to all authenticated users (readiness already enforced above)
         if (document.getAccessScope() == AccessScope.ALL) {
             return true;
+        }
+
+        // GUEST may only retrieve public/shared knowledge. Department-scoped documents
+        // are never eligible for RAG for this role, regardless of department, hierarchy,
+        // or uploader identity.
+        if (isGuest(userRole)) {
+            return false;
         }
 
         // Document must have a department for department-scoped access

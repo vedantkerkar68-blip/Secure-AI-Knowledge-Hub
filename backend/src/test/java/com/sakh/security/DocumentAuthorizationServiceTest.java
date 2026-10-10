@@ -48,6 +48,7 @@ class DocumentAuthorizationServiceTest {
     private User manager;
     private User employee;
     private User employeeNoDept;
+    private User guest;
     private Department deptA;
     private Department deptB;
     private Department deptC; // child of deptA
@@ -78,6 +79,12 @@ class DocumentAuthorizationServiceTest {
         manager = createUser(managerRole, deptA, "manager@test.com");
         employee = createUser(employeeRole, deptA, "employee@test.com");
         employeeNoDept = createUser(employeeRole, null, "nodept@test.com");
+
+        Role guestRole = new Role();
+        guestRole.setName("GUEST");
+        // GUEST sits in deptA so that department membership genuinely applies and
+        // can be shown not to help it.
+        guest = createUser(guestRole, deptA, "guest@test.com");
 
         // Department hierarchy: deptA -> deptC
         // collectAncestorIds(allDepartments, userDeptId) -> returns ancestors including self
@@ -244,7 +251,170 @@ class DocumentAuthorizationServiceTest {
                 "A user without a role must not inherit ADMIN privileges");
     }
 
-    // J. Employee in ancestor department can see ancestor's documents
+    // L. GUEST policy: public/shared knowledge only.
+    // GUEST may reach READY AccessScope.ALL documents and nothing else.
+    @Test
+    void checkDocumentViewAccess_guest_canViewAllScopeDocument() {
+        Document shared = createDocument(AccessScope.ALL, DocumentStatus.READY, deptB, employee);
+        assertDoesNotThrow(() -> authorizationService.checkDocumentViewAccess(shared, guest),
+                "GUEST must be able to view a shared document");
+        assertDoesNotThrow(() -> authorizationService.requireReadable(shared, guest),
+                "A READY shared document must satisfy the GUEST readability gate");
+    }
+
+    @Test
+    void checkDocumentViewAccess_guest_cannotViewDepartmentScopedDocument() {
+        // Same department as the guest: department membership must not help GUEST.
+        Document ownDept = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, admin);
+        assertThrows(ResourceNotFoundException.class,
+                () -> authorizationService.checkDocumentViewAccess(ownDept, guest),
+                "GUEST must not reach a department-scoped document in its own department");
+
+        // Ancestor department.
+        Document ancestor = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, admin);
+        assertThrows(ResourceNotFoundException.class,
+                () -> authorizationService.checkDocumentViewAccess(ancestor, guest));
+
+        // Unrelated department.
+        Document unrelated = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptB, admin);
+        assertThrows(ResourceNotFoundException.class,
+                () -> authorizationService.checkDocumentViewAccess(unrelated, guest));
+    }
+
+    @Test
+    void checkDocumentViewAccess_guest_cannotUseOwnUploadException() {
+        // Even when the guest is the uploader, the EMPLOYEE-only own-upload
+        // exception must not apply.
+        Document ownUpload = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptB, guest);
+        assertThrows(ResourceNotFoundException.class,
+                () -> authorizationService.checkDocumentViewAccess(ownUpload, guest),
+                "GUEST must not gain access through the uploader identity");
+    }
+
+    @Test
+    void requireReadable_guest_deniedForNonReadySharedDocument() {
+        for (DocumentStatus status : List.of(DocumentStatus.PENDING, DocumentStatus.PROCESSING,
+                DocumentStatus.FAILED, DocumentStatus.ARCHIVED)) {
+            Document shared = createDocument(AccessScope.ALL, status, deptB, employee);
+            assertThrows(ResourceNotFoundException.class,
+                    () -> authorizationService.requireReadable(shared, guest),
+                    "GUEST must not read a " + status + " shared document");
+            assertFalse(authorizationService.isAccessibleForRag(shared, guest),
+                    "A " + status + " shared document must not enter the GUEST prompt");
+        }
+    }
+
+    @Test
+    void isAccessibleForRag_guest_readyAllScope_allowed() {
+        Document shared = createDocument(AccessScope.ALL, DocumentStatus.READY, deptB, employee);
+        assertTrue(authorizationService.isAccessibleForRag(shared, guest),
+                "GUEST may retrieve READY public/shared knowledge");
+    }
+
+    @Test
+    void isAccessibleForRag_guest_departmentScopedDenied() {
+        Document sameDept = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, admin);
+        assertFalse(authorizationService.isAccessibleForRag(sameDept, guest),
+                "GUEST must not retrieve department-scoped content from its own department");
+
+        Document ownUpload = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptB, guest);
+        assertFalse(authorizationService.isAccessibleForRag(ownUpload, guest),
+                "The uploader identity must not grant GUEST RAG access");
+
+        Document ancestor = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, admin);
+        assertFalse(authorizationService.isAccessibleForRag(ancestor, guest));
+    }
+
+    @Test
+    void isAccessibleForRag_guest_nullInputsFailClosed() {
+        Document shared = createDocument(AccessScope.ALL, DocumentStatus.READY, deptB, employee);
+        assertFalse(authorizationService.isAccessibleForRag(null, guest));
+        assertFalse(authorizationService.isAccessibleForRag(shared, null));
+        assertFalse(authorizationService.isAccessibleForRag(null, null));
+    }
+
+    @Test
+    void validateUploadTarget_guest_denied() {
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> authorizationService.validateUploadTarget(guest, deptA, AccessScope.DEPARTMENT),
+                "GUEST must not upload to any department");
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> authorizationService.validateUploadTarget(guest, deptA, AccessScope.ALL),
+                "GUEST must not upload a shared document");
+    }
+
+    // K2. Descendant departments are NOT readable.
+    // deptC is a child of deptA, so for a user in deptA, deptC is a DESCENDANT.
+    // Read visibility is own department + ancestors only, so a READY document in
+    // deptC must be denied to both MANAGER and EMPLOYEE through the API and RAG.
+    @Test
+    void checkDocumentViewAccess_managerInParentDept_cannotReadDescendantDoc() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptC, manager);
+        assertThrows(ResourceNotFoundException.class,
+                () -> authorizationService.checkDocumentViewAccess(doc, manager),
+                "A descendant-department document must not be readable by a MANAGER");
+    }
+
+    @Test
+    void isAccessibleForRag_managerInParentDept_cannotReadDescendantDoc() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptC, manager);
+        assertFalse(authorizationService.isAccessibleForRag(doc, manager),
+                "A descendant-department document must not enter RAG context for a MANAGER");
+    }
+
+    @Test
+    void checkDocumentViewAccess_employeeInParentDept_cannotReadDescendantDoc() {
+        // Uploader must NOT be the employee, otherwise the EMPLOYEE own-upload
+        // exception would legitimately grant access and mask the department rule.
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptC, admin);
+        assertThrows(ResourceNotFoundException.class,
+                () -> authorizationService.checkDocumentViewAccess(doc, employee),
+                "A descendant-department document must not be readable by an EMPLOYEE");
+    }
+
+    @Test
+    void isAccessibleForRag_employeeInParentDept_cannotReadDescendantDoc() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptC, admin);
+        assertFalse(authorizationService.isAccessibleForRag(doc, employee),
+                "A descendant-department document must not enter RAG context for an EMPLOYEE");
+    }
+
+    @Test
+    void isAccessibleForRag_employeeOwnUploadInDescendantDept_isStillAllowed() {
+        // The EMPLOYEE own-upload exception is unaffected by the descendant rule:
+        // an employee keeps reaching their own uploads from any department.
+        Document ownUpload = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptC, employee);
+        assertTrue(authorizationService.isAccessibleForRag(ownUpload, employee),
+                "An employee must still reach their own upload in a descendant department");
+        assertDoesNotThrow(() -> authorizationService.checkDocumentViewAccess(ownUpload, employee));
+    }
+
+    // K3. A shared (AccessScope.ALL) document IS visible from a descendant department.
+    // This guards the opposite direction so the fix above cannot over-restrict.
+    @Test
+    void isAccessibleForRag_employeeInParentDept_canReadSharedDescendantDoc() {
+        Document shared = createDocument(AccessScope.ALL, DocumentStatus.READY, deptC, manager);
+        assertTrue(authorizationService.isAccessibleForRag(shared, employee),
+                "AccessScope.ALL must remain visible regardless of department");
+    }
+
+    // K4. MANAGER upload scope is the descendant SUBTREE and is unaffected by the read rules.
+    @Test
+    void validateUploadTarget_managerCanStillUploadToOwnSubtree() {
+        assertDoesNotThrow(() -> authorizationService.validateUploadTarget(manager, deptA, AccessScope.DEPARTMENT),
+                "MANAGER must still upload to their own department");
+        assertDoesNotThrow(() -> authorizationService.validateUploadTarget(manager, deptC, AccessScope.DEPARTMENT),
+                "MANAGER upload to a descendant department must remain allowed");
+    }
+
+    @Test
+    void validateUploadTarget_managerCannotUploadToUnrelatedDepartment() {
+        assertThrows(org.springframework.security.access.AccessDeniedException.class,
+                () -> authorizationService.validateUploadTarget(manager, deptB, AccessScope.DEPARTMENT),
+                "MANAGER must not upload to an unrelated department");
+    }
+
+    // Employee in ancestor department can see ancestor's documents
     @Test
     void isAccessibleForRag_employeeInChildDeptSeesAncestorDoc_allowed() {
         // employee in deptA, document in deptA (same dept = ancestor)

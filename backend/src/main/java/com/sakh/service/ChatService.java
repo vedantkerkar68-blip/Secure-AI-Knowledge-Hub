@@ -233,7 +233,7 @@ public class ChatService {
         answer = verification.text();
         metricsCollector.recordHallucination(verification.totalSentences(), verification.removedSentences());
 
-        List<CitationDTO> citations = citationService.createCitations(documents);
+        List<CitationDTO> citations = citationService.createCitations(documents, roleOf(currentUser));
 
         ChatMessage assistantMessage = new ChatMessage();
         assistantMessage.setSession(session);
@@ -318,7 +318,7 @@ public class ChatService {
                     var verification = answerVerifier.verify(fullAnswer.toString(), documents);
                     String verified = verification.text();
                     metricsCollector.recordHallucination(verification.totalSentences(), verification.removedSentences());
-                    List<CitationDTO> citations = citationService.createCitations(documents);
+                    List<CitationDTO> citations = citationService.createCitations(documents, roleOf(currentUser));
 
                     ChatMessage assistantMessage = new ChatMessage();
                     assistantMessage.setSession(session);
@@ -366,6 +366,14 @@ public class ChatService {
 
         return BigDecimal.valueOf(Math.min(confidence, 1.0))
                 .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Role name for the given user, or an empty string when no role is assigned.
+     * Used to decide citation-metadata disclosure, which differs for GUEST.
+     */
+    private static String roleOf(User user) {
+        return user != null && user.getRole() != null ? user.getRole().getName() : "";
     }
 
     private User getCurrentUser() {

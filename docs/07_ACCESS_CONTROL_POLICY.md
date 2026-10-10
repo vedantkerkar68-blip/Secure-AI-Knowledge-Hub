@@ -36,9 +36,58 @@ This document defines the authoritative authorization policy for document access
 | `ADMIN` | Full document management access, all users, departments, activity logs. RAG retrieval still requires `READY` (§5.4). |
 | `MANAGER` | Department-scoped access — own department plus ancestor departments; may upload to their own subtree |
 | `EMPLOYEE` | Department documents plus their own uploads |
-| `GUEST` | Seeded role; **no enforcement branch exists** — treat as unprovisioned |
+| `GUEST` | Public/shared knowledge only — `AccessScope.ALL` documents that are `READY` (§3.1) |
 
-> ⚠️ `GUEST` is seeded in the database (`V1__initial_schema.sql`) and documented in early specs, but the current authorization code has no `GUEST` branch in `RetrieverService` or `DocumentService`. Treat `GUEST` as unprovisioned until explicitly implemented.
+### 3.1 GUEST Policy (implemented)
+
+`GUEST` is seeded in the database (`V1__initial_schema.sql`) and is assigned by an
+administrator. Its access is **explicitly restricted**, not merely inherited from the
+absence of a branch.
+
+| Concern | GUEST rule |
+|---------|-----------|
+| Document API — list, search, details, status | `AccessScope.ALL` **and** `READY` only |
+| Document API — preview, download | `AccessScope.ALL` **and** `READY` only |
+| Document API — versions, upload-options | ❌ Denied (administration surface) |
+| Global hybrid RAG | `AccessScope.ALL` **and** `READY` only |
+| Document-scoped RAG | `AccessScope.ALL` **and** `READY` only |
+| Upload, status change, reprocess, delete | ❌ Denied |
+| User / department administration | ❌ Denied |
+| Citation metadata | Owning department **redacted** (§3.2) |
+| Chat | ✅ Allowed over public/shared knowledge only |
+
+**GUEST never receives department-scoped access**, regardless of:
+
+- department membership (including the guest's own department);
+- position in the department hierarchy (ancestor or descendant);
+- uploader identity — the EMPLOYEE own-upload exception does not apply to `GUEST`.
+
+### 3.2 Citation Metadata
+
+Citations returned in a chat answer may expose the owning document's department
+alongside its title. The access-control policy establishes that an `AccessScope.ALL`
+document is *visible* to all authenticated users; it does **not** establish that the
+owning department is itself public information. GUEST citations therefore omit
+`department`. All other roles keep the existing behaviour unchanged.
+
+Redaction is applied in `CitationService` after the documents have already passed
+authorization, so it narrows disclosure only and never grants access.
+
+### 3.3 Enforcement Layers
+
+GUEST access is enforced independently at three layers. The controller rule is not a
+substitute for the layers beneath it.
+
+1. **HTTP routing (`DocumentController`)** — the read-only document endpoints are
+   `hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')`. Every mutation, the version
+   history, and upload-options remain `ADMIN`/`MANAGER`/`ADMIN`-only.
+2. **Service (`DocumentAuthorizationService`)** — `checkDocumentViewAccess()` denies
+   GUEST any document that is not `AccessScope.ALL`; `requireReadable()` additionally
+   enforces `READY` because GUEST is not ADMIN; `isAccessibleForRag()` applies the same
+   rule to both retrieval paths; `validateUploadTarget()` denies upload.
+3. **Query (`DocumentRepository`)** — `getAllDocuments()` and `searchDocuments()` pass an
+   `allScopeOnly` flag that restricts the **query itself**, so pagination counts only
+   permitted rows. Filtering after the query would corrupt page boundaries.
 
 ---
 
@@ -236,7 +285,7 @@ records implemented behaviour; it is not a recommendation.
 
 | # | Ambiguity | Currently implemented | Decision Needed |
 |---|-----------|------------------------|-----------------|
-| 1 | GUEST role semantics | No `GUEST` branch exists; treated as unprovisioned | Is GUEST a supported role? If so, what are its permissions? |
+| 1 | GUEST role breadth | **Resolved:** `GUEST` is implemented as public/shared knowledge only — `AccessScope.ALL` + `READY`; no upload, no administration, no department-scoped access (§3.1) | Should `GUEST` ever gain department-scoped read access, or upload? |
 | 2 | LLM_PROCESSING separate tier | Not implemented; Phase 2 rule is authorized + READY (§5.2) | Should a third access-scope value such as `LLM_ONLY` exist? |
 | 3 | MANAGER descendant visibility | **Not** implemented: MANAGER sees own department + ancestors only (§4.1) | Should MANAGER also see descendant departments? |
 | 4 | EMPLOYEE own-upload outside department | **Implemented in both** the document API and RAG: own uploads are reachable from any department (§4.1) | Should EMPLOYEE see their own uploads even in other departments? |

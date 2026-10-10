@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -389,6 +390,87 @@ class RetrieverServiceTest {
 
         assertFalse(retriever.retrieve("policy", admin, 5, docId).isEmpty(),
                 "A READY document must be retrievable when scoped, for ADMIN");
+    }
+
+    /**
+ * GUEST may retrieve public/shared knowledge only. Candidate generation is permissive,
+ * so these tests prove the authoritative authorization check rejects department-scoped
+ * content even when the vector store and keyword query return it as candidates.
+ */
+@Test
+    void retrieve_guestGlobalRag_returnsOnlySharedReadyContent() {
+        User guest = user("guest@sakh.com", "GUEST", CHILD_DEPT_ID);
+
+        com.sakh.entity.Document shared = entityDocument(960L, UNRELATED_DEPT_ID, AccessScope.ALL,
+                DocumentStatus.READY, "owner@sakh.com");
+        com.sakh.entity.Document deptScoped = entityDocument(961L, CHILD_DEPT_ID, AccessScope.DEPARTMENT,
+                DocumentStatus.READY, "owner@sakh.com");
+
+        // Both are offered as candidates; only the shared one may survive.
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                chunkDoc(1L, shared.getId(), 0.9),
+                chunkDoc(2L, deptScoped.getId(), 0.8)));
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(List.of());
+        when(documentRepository.findAllById(any())).thenReturn(List.of(shared, deptScoped));
+
+        List<Document> results = retriever.retrieve("policy", guest, 5);
+
+        assertEquals(1, results.size(),
+                "GUEST must receive only the READY shared document");
+        assertEquals(shared.getId(), ((Number) results.get(0).getMetadata().get("documentId")).longValue());
+    }
+
+    @Test
+    void retrieve_guestGlobalRag_cannotRetrieveOwnDepartmentContent() {
+        User guest = user("guest@sakh.com", "GUEST", CHILD_DEPT_ID);
+
+        // A document in the guest's OWN department must still be out of reach.
+        com.sakh.entity.Document ownDept = entityDocument(962L, CHILD_DEPT_ID, AccessScope.DEPARTMENT,
+                DocumentStatus.READY, "owner@sakh.com");
+
+        stubSemantic(ownDept.getId());
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(List.of());
+        when(documentRepository.findAllById(any())).thenReturn(List.of(ownDept));
+
+        assertTrue(retriever.retrieve("policy", guest, 5).isEmpty(),
+                "GUEST must not retrieve department-scoped content from its own department");
+    }
+
+    @Test
+    void retrieve_guestScopedRag_deniesDepartmentScopedDocument() {
+        User guest = user("guest@sakh.com", "GUEST", CHILD_DEPT_ID);
+        Long docId = 963L;
+
+        com.sakh.entity.Document deptScoped = entityDocument(docId, CHILD_DEPT_ID, AccessScope.DEPARTMENT,
+                DocumentStatus.READY, "owner@sakh.com");
+        when(documentRepository.findById(docId)).thenReturn(Optional.of(deptScoped));
+
+        assertThrows(com.sakh.exception.ResourceNotFoundException.class,
+                () -> retriever.retrieve("policy", guest, 5, docId),
+                "Document-scoped RAG must reject a department-scoped document for GUEST");
+    }
+
+    @Test
+    void retrieve_guestScopedRag_allowsSharedReadyDocument() {
+        User guest = user("guest@sakh.com", "GUEST", CHILD_DEPT_ID);
+        Long docId = 964L;
+
+        com.sakh.entity.Document shared = entityDocument(docId, UNRELATED_DEPT_ID, AccessScope.ALL,
+                DocumentStatus.READY, "owner@sakh.com");
+        when(documentRepository.findById(docId)).thenReturn(Optional.of(shared));
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                Document.builder()
+                        .text("shared chunk")
+                        .metadata(java.util.Map.of("chunkId", 1L, "documentId", docId))
+                        .score(0.9)
+                        .build()));
+        when(chunkRepository.findKeywordSearchInDocument(anyString(), anyLong(), anyInt()))
+                .thenReturn(List.of());
+
+        assertFalse(retriever.retrieve("policy", guest, 5, docId).isEmpty(),
+                "GUEST must retain document-scoped RAG over public/shared knowledge");
     }
 
     private static Document chunkDoc(Long chunkId, Long documentId, double score) {

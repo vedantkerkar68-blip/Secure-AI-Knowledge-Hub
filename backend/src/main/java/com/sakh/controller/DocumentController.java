@@ -69,7 +69,7 @@ public class DocumentController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')")
     @Operation(summary = "List documents", description = "Returns a paginated list of documents with optional filters")
     public ResponseEntity<Page<DocumentListResponse>> getAllDocuments(
             @RequestParam(required = false) String search,
@@ -80,7 +80,7 @@ public class DocumentController {
     }
 
     @GetMapping("/search")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')")
     @Operation(summary = "Keyword search", description = "Full-text keyword search across document titles, filenames, and metadata")
     public ResponseEntity<Page<DocumentListResponse>> searchDocuments(
             @RequestParam(required = false) String query,
@@ -89,21 +89,21 @@ public class DocumentController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')")
     @Operation(summary = "Get document by ID", description = "Returns document details by ID")
     public ResponseEntity<DocumentResponse> getDocumentById(@PathVariable Long id) {
         return ResponseEntity.ok(documentService.getDocumentById(id));
     }
 
     @GetMapping("/{id}/preview")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')")
     @Operation(summary = "Preview document metadata", description = "Returns document preview with title, summary, author, tags, and other metadata")
     public ResponseEntity<DocumentPreviewResponse> previewDocument(@PathVariable Long id) {
         return ResponseEntity.ok(documentService.getDocumentPreview(id));
     }
 
     @GetMapping("/{id}/download")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')")
     @Operation(summary = "Download document", description = "Downloads the original document file")
     public ResponseEntity<Resource> downloadDocument(@PathVariable Long id) {
         Resource resource = documentService.downloadDocument(id);
@@ -123,7 +123,7 @@ public class DocumentController {
     }
 
     @GetMapping("/{id}/status")
-    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER', 'EMPLOYEE', 'GUEST')")
     @Operation(summary = "Get document status", description = "Returns the processing status of a document")
     public ResponseEntity<UpdateDocumentStatusResponse> getDocumentStatus(@PathVariable Long id) {
         return ResponseEntity.ok(documentService.getDocumentStatus(id));

@@ -151,6 +151,7 @@ public DocumentService(DocumentRepository documentRepository,
         String userRole = getCurrentUserRole();
 
         List<Long> allowedDepartmentIds = authorizationService.resolveVisibleDepartmentIds(currentUser, userRole);
+        boolean allScopeOnly = isGuest(userRole);
 
         // When visibility is scoped to the department tree, ignore the raw department filter
         // so users can only see documents from their own branch of the tree.
@@ -159,11 +160,13 @@ public DocumentService(DocumentRepository documentRepository,
         }
 
         // Non-admins may only see documents that have finished processing.
+        // GUEST is additionally restricted to READY public/shared documents.
         if (!"ADMIN".equals(userRole)) {
             status = DocumentStatus.READY;
         }
 
-        Page<Document> documents = documentRepository.findWithFilters(search, department, status, allowedDepartmentIds, pageable);
+        Page<Document> documents = documentRepository.findWithFilters(
+                search, department, status, allowedDepartmentIds, allScopeOnly, pageable);
         return documents.map(this::toListResponse);
     }
 
@@ -176,6 +179,12 @@ public DocumentService(DocumentRepository documentRepository,
 
         DocumentMetadata metadata = documentMetadataRepository.findByDocumentId(id);
 
+        // GUEST may read public/shared knowledge only, and the access-control policy does
+        // not establish the owning department or the uploader as public information, so
+        // both are withheld for that role. This affects only the response DTO: the
+        // persisted entity is never modified, and every other role is unchanged.
+        boolean redactOwnerMetadata = isGuest(getCurrentUserRole());
+
         return DocumentPreviewResponse.builder()
                 .title(document.getTitle())
                 .summary(metadata != null ? metadata.getSummary() : null)
@@ -184,8 +193,10 @@ public DocumentService(DocumentRepository documentRepository,
                 .author(metadata != null ? metadata.getAuthor() : null)
                 .tags(metadata != null ? metadata.getTags() : null)
                 .version(metadata != null ? metadata.getVersion() : null)
-                .department(document.getDepartment() != null ? document.getDepartment().getName() : null)
-                .uploadedBy(document.getUploadedBy() != null ? document.getUploadedBy().getEmail() : null)
+                .department(!redactOwnerMetadata && document.getDepartment() != null
+                        ? document.getDepartment().getName() : null)
+                .uploadedBy(!redactOwnerMetadata && document.getUploadedBy() != null
+                        ? document.getUploadedBy().getEmail() : null)
                 .createdAt(document.getCreatedAt())
                 .build();
     }
@@ -195,11 +206,24 @@ public DocumentService(DocumentRepository documentRepository,
         String userRole = getCurrentUserRole();
 
         List<Long> allowedDepartmentIds = authorizationService.resolveVisibleDepartmentIds(currentUser, userRole);
+        boolean allScopeOnly = isGuest(userRole);
 
         DocumentStatus status = "ADMIN".equals(userRole) ? null : DocumentStatus.READY;
 
-        Page<Document> documents = documentRepository.searchByKeyword(query, status != null ? status.name() : null, allowedDepartmentIds, pageable);
+        // `department` is null here: this endpoint takes no department filter.
+        // `status` is bound to its own query parameter; it used to be bound to the
+        // department-name parameter, which broke keyword search for every non-ADMIN caller.
+        Page<Document> documents = documentRepository.searchByKeyword(
+                query, null, status, allowedDepartmentIds, allScopeOnly, pageable);
         return documents.map(this::toListResponse);
+    }
+
+    /**
+     * GUEST is limited to public/shared knowledge and never receives department-scoped
+     * visibility through the document list or search paths.
+     */
+    private static boolean isGuest(String userRole) {
+        return "GUEST".equals(userRole);
     }
 
     public DocumentResponse getDocumentById(Long id) {
