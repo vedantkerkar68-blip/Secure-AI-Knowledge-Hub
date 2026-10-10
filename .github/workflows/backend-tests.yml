@@ -76,45 +76,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-client
 
-      - name: Seed controlled development-schema sentinel
-        env:
-          PGPASSWORD: sakh_ci_disposable_pw
-        run: |
-          psql -h localhost -U sakh_ci -d sakh_test -v ON_ERROR_STOP=1 <<'SQL'
-          -- pgvector is database-scoped; create it up front.
-          CREATE EXTENSION IF NOT EXISTS vector;
-          CREATE SCHEMA IF NOT EXISTS sakh_test;
-
-          -- Create sakh_test.vector_store FIRST. Flyway's V6 uses
-          -- CREATE TABLE IF NOT EXISTS vector_store, which resolves through
-          -- search_path (sakh_test, public). If only public.vector_store existed,
-          -- V6 would skip creating the test-schema table.
-          CREATE TABLE IF NOT EXISTS sakh_test.vector_store (
-              id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-              content   TEXT,
-              metadata  JSONB,
-              embedding VECTOR(3072)
-          );
-
-          -- Controlled fixture in the DEVELOPMENT schema. TestDatabaseIsolationTest
-          -- asserts that vector writes targeting sakh_test leave every existing row
-          -- here - id, content, metadata and embedding - byte-for-byte unchanged.
-          CREATE TABLE IF NOT EXISTS public.vector_store (
-              id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-              content   TEXT,
-              metadata  JSONB,
-              embedding VECTOR(3072)
-          );
-
-          INSERT INTO public.vector_store (content, metadata, embedding)
-          SELECT 'ci-sentinel-a', '{"documentId":"0","accessScope":"ALL"}'::jsonb, NULL
-          WHERE NOT EXISTS (SELECT 1 FROM public.vector_store WHERE content = 'ci-sentinel-a');
-
-          INSERT INTO public.vector_store (content, metadata, embedding)
-          SELECT 'ci-sentinel-b', '{"documentId":"0","accessScope":"ALL"}'::jsonb, NULL
-          WHERE NOT EXISTS (SELECT 1 FROM public.vector_store WHERE content = 'ci-sentinel-b');
-          SQL
-
       - name: Database safety and isolation tests
         working-directory: backend
         run: mvn -B test -Dtest=TestDatabaseSafetyGuardTest,TestDatabaseConfigDataOrderingTest,TestDatabaseSafetyWiringTest,TestDatabaseIsolationTest
