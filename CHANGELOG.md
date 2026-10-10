@@ -1,3 +1,19 @@
+## Unreleased
+
+### Security
+- **RAG readiness enforced for every role**: `DocumentAuthorizationService.isAccessibleForRag()` now checks document status *before* any role or access-scope decision, so `READY` is required for content to enter an LLM prompt for **all** roles including `ADMIN`, and for every access scope including `AccessScope = ALL`. Previously `ADMIN` returned `true` before any status check, allowing `PENDING` / `PROCESSING` / `FAILED` content into a prompt.
+- **`isAccessibleForRag()` fails closed on null input**: a null document or a null user now returns `false` instead of throwing `NullPointerException`.
+- **Document management is unchanged**: `requireReadable()` still exempts `ADMIN`, so preview, details, versions, download and status inspection continue to work for documents that are not `READY`. Management permission and LLM-processing eligibility are now explicitly separate concerns.
+
+### Fixed
+- **Authorized chunks no longer lost in global retrieval**: candidate generation is permissive for recall and the vector filter has no status clause, so non-`READY` candidates were occupying the `topK` window and then being discarded, permanently dropping authorized chunks that ranked just below the cut. The window is now ranked at its full `fetchSize`, authorized, and only then capped to `topK`.
+
+### Changed
+- **README access-control wording corrected**: the previous "ADMIN sees all" description of vector/keyword search contradicted the readiness rule. The README now states the readiness invariant and distinguishes document-management permissions from LLM-processing eligibility, without duplicating the full policy.
+
+### Notes
+- `docs/07_ACCESS_CONTROL_POLICY.md` carries the detailed access-control policy and was updated with the same rule (new section 5.4, plus the resolved-conflict entry). That file is intentionally **local-only** - `.gitignore` excludes `docs/*` except screenshots - so it is not part of any commit. The tracked README carries the invariant and points to it. Whether to track the full policy is an open repository-convention question.
+
 ## v0.2.1 — 2026-08-28
 
 ### Fixed

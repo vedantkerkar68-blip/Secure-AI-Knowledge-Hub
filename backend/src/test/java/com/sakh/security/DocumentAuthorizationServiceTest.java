@@ -211,6 +211,39 @@ class DocumentAuthorizationServiceTest {
         }
     }
 
+    // J. Fail-closed null handling: no NullPointerException in any combination
+    @Test
+    void isAccessibleForRag_nullDocumentWithValidUser_failsClosed() {
+        assertFalse(authorizationService.isAccessibleForRag(null, employee));
+        assertFalse(authorizationService.isAccessibleForRag(null, admin));
+    }
+
+    @Test
+    void isAccessibleForRag_readyDocumentWithNullUser_failsClosed() {
+        Document ready = createDocument(AccessScope.ALL, DocumentStatus.READY, deptA, employee);
+        assertFalse(authorizationService.isAccessibleForRag(ready, null),
+                "A null user must fail closed even for a READY, shared document");
+    }
+
+    @Test
+    void isAccessibleForRag_nonReadyDocumentWithNullUser_failsClosed() {
+        Document pending = createDocument(AccessScope.ALL, DocumentStatus.PENDING, deptA, employee);
+        assertFalse(authorizationService.isAccessibleForRag(pending, null));
+        // Both null at once must also be safe.
+        assertFalse(authorizationService.isAccessibleForRag(null, null));
+    }
+
+    // J2. Anonymous user: a User with no role is not ADMIN and has no department.
+    @Test
+    void isAccessibleForRag_userWithoutRole_isNotTreatedAsAdmin() {
+        Document ready = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, employee);
+        User noRole = new User();
+        noRole.setEmail("norole@test.com");
+
+        assertFalse(authorizationService.isAccessibleForRag(ready, noRole),
+                "A user without a role must not inherit ADMIN privileges");
+    }
+
     // J. Employee in ancestor department can see ancestor's documents
     @Test
     void isAccessibleForRag_employeeInChildDeptSeesAncestorDoc_allowed() {

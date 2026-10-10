@@ -166,11 +166,14 @@ public class DocumentAuthorizationService {
      * status inspection) still works for documents that are not yet READY. Management
      * permission and LLM-processing eligibility are deliberately separate.
      *
-     * @return {@code true} only for a READY document the user may access; {@code false}
-     *         for a null document or any non-READY document
+     * <p>This method fails closed: a null document, a null user, or a non-READY
+     * document all return {@code false} rather than throwing.
+     *
+     * @return {@code true} only for a READY document the given user may access;
+     *         {@code false} for a null document, a null user, or any non-READY document
      */
     public boolean isAccessibleForRag(Document document, User user) {
-        if (document == null) {
+        if (document == null || user == null) {
             return false;
         }
 

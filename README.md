@@ -160,7 +160,10 @@ flowchart LR
 - **Password Hashing**: BCrypt via Spring Security `PasswordEncoder`
 - **Authorization**: Method-level `@PreAuthorize` annotations + request-matcher rules in `SecurityConfig`
 - **Role Hierarchy**: ADMIN > MANAGER > EMPLOYEE > GUEST
-- **Document Access**: Vector search and keyword search filter results by department ID and role — ADMIN sees all, MANAGER sees department, EMPLOYEE sees department + own uploads
+- **Document Access**: Vector search and keyword search filter results by department ID and role — MANAGER sees their department (plus ancestors), EMPLOYEE sees their department (plus ancestors) and their own uploads. `AccessScope = ALL` documents are visible to every authenticated user.
+- **RAG Readiness Rule**: Document content may enter an LLM prompt **only when the document status is `READY`**. This applies to **every role, including `ADMIN`**, and to every access scope, including `AccessScope = ALL`. Sharing a document with everyone makes it *visible*; it never makes incomplete or failed content *eligible for the LLM*.
+- **Two Separate Concerns**: *Document management* (preview, details, versions, download, status inspection) is governed by role and permits `ADMIN` to work with documents in any status. *LLM processing eligibility* is governed by the readiness rule above and applies to everyone. `ADMIN` can therefore troubleshoot a `FAILED` document through the document API while none of that content can enter a chat prompt.
+- **Full policy**: the detailed access-control rules, hierarchy semantics, and unresolved ambiguities are maintained in `docs/07_ACCESS_CONTROL_POLICY.md`. That file is intentionally **local-only** (`.gitignore` excludes `docs/*`, except screenshots), so this README deliberately states only the invariants rather than duplicating the full tables and risking the two drifting apart.
 - **Upload Validation**: extension allowlist plus magic-byte content verification and a 10MB size cap
 - **Rate Limiting**: fixed-window limits on login, registration, and chat endpoints, keyed by client IP or user
 - **CORS**: Configurable via `CORS_ALLOWED_ORIGINS` env var; supports multiple origins
@@ -173,10 +176,12 @@ flowchart LR
 
 | Role | Description | Documents | Users | Departments | Activity Logs | Chat |
 |---|---|---|---|---|---|---|
-| ADMIN | Full system access | All documents | View, create, toggle status | CRUD | View all | All docs |
-| MANAGER | Department management | Department documents | View department users | View only | Department scope | Department docs |
-| EMPLOYEE | Document interaction | Own uploads + department docs | View own profile | View only | Own activity | Department docs + own uploads |
+| ADMIN | Full system access | All documents (any status) | View, create, toggle status | CRUD | View all | All **READY** documents |
+| MANAGER | Department management | Department documents | View department users | View only | Department scope | Department READY documents |
+| EMPLOYEE | Document interaction | Own uploads + department docs | View own profile | View only | Own activity | Department READY documents + own READY uploads |
 | GUEST | Read-only access | Only explicitly uploaded | View own profile | View only | Own activity | Own uploads only |
+
+> **Note on the Chat column:** chat answers are generated from retrieved document content, so the **RAG Readiness Rule** above applies — only `READY` documents contribute to an answer, for every role including `ADMIN`. This is narrower than the *Documents* column, which reflects document-management access. See "Security Architecture" for the full distinction.
 
 ---
 
