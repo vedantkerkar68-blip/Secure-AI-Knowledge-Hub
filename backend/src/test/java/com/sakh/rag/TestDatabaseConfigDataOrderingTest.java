@@ -4,8 +4,10 @@ import com.sakh.BackendApplication;
 import com.sakh.support.TestDatabaseSafetyEnvironmentPostProcessor;
 import com.sakh.support.TestDatabaseSafetyGuard;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.context.config.ConfigDataEnvironmentPostProcessor;
+import org.springframework.context.ConfigurableApplicationContext;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,7 +15,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -89,8 +90,21 @@ class TestDatabaseConfigDataOrderingTest {
     }
 
     /**
-     * A datasource that is only reachable through Config Data and is perfectly safe must
-     * still start, proving the fix did not simply start rejecting everything.
+     /**
+     * A safe datasource supplied through a temporary Config Data file must be accepted
+     * by the guard, and the decision must demonstrably come from that file.
+     *
+     * <p>The file declares both a database name that is NOT in the default allow-list
+     * and an explicit allow-list entry for it, so startup can only succeed if the guard
+     * read the URL <em>and</em> the allow-list from Config Data. The companion test
+     * {@link #safeUrlWithoutAnAllowListEntry_isRejectedFromConfigData()} proves the URL
+     * in that file is genuinely the value being judged.
+     *
+     * <p>A minimal application source is used instead of the real one so no
+     * DataSource, Flyway, or JPA bean is created: the guard runs during environment
+     * preparation regardless, and no database has to be available for the test to be
+     * meaningful. This keeps the test about the guard rather than about whether the
+     * whole application can boot.
      */
     @Test
     void safeUrlSuppliedThroughConfigData_isAccepted() throws Exception {
@@ -99,14 +113,75 @@ class TestDatabaseConfigDataOrderingTest {
             Files.writeString(configDir.resolve("application-test.yml"),
                     "spring:\n"
                             + "  datasource:\n"
-                            + "    url: \"jdbc:postgresql://localhost:5432/sakh_db?currentSchema=sakh_test,public\"\n");
+                            + "    url: \"jdbc:postgresql://localhost:5432/ci_isolated_test_db\"\n"
+                            + "sakh:\n"
+                            + "  test-db:\n"
+                            + "    allowed-databases: \"ci_isolated_test_db\"\n");
 
-            assertDoesNotThrow(() -> TestDatabaseSafetyGuard.validate(
-                    "jdbc:postgresql://localhost:5432/sakh_db?currentSchema=sakh_test,public",
-                    null, null, true));
+            ConfigurableApplicationContext context = null;
+            try {
+                context = new SpringApplicationBuilder(GuardProbeApp.class)
+                        .web(WebApplicationType.NONE)
+                        .profiles("test")
+                        .properties("spring.config.additional-location=" + configDir.toUri())
+                        .run();
+
+                assertTrue(context.isRunning(),
+                        "The guard must accept a safe, explicitly allow-listed datasource from Config Data");
+                assertTrue(context.getEnvironment()
+                                .getProperty("spring.datasource.url")
+                                .contains("ci_isolated_test_db"),
+                        "The temporary Config Data file must be the source of the datasource URL");
+            } finally {
+                if (context != null) {
+                    context.close();
+                }
+            }
         } finally {
             deleteRecursively(configDir);
         }
+    }
+
+    /**
+     * Negative control for {@link #safeUrlSuppliedThroughConfigData_isAccepted()}: the
+     * same file shape, minus the allow-list entry, must be rejected. This is what proves
+     * the guard is judging the URL from the temporary Config Data file rather than some
+     * default that happens to be acceptable.
+     */
+    @Test
+    void safeUrlWithoutAnAllowListEntry_isRejectedFromConfigData() throws Exception {
+        Path configDir = Files.createTempDirectory("sakh-configdata-guard-unlisted");
+        try {
+            Files.writeString(configDir.resolve("application-test.yml"),
+                    "spring:\n"
+                            + "  datasource:\n"
+                            + "    url: \"jdbc:postgresql://localhost:5432/ci_isolated_test_db\"\n");
+
+            Throwable thrown = assertThrows(Throwable.class,
+                    () -> new SpringApplicationBuilder(GuardProbeApp.class)
+                            .web(WebApplicationType.NONE)
+                            .profiles("test")
+                            .properties("spring.config.additional-location=" + configDir.toUri())
+                            .run());
+
+            assertTrue(describeChain(thrown).contains(TestDatabaseSafetyGuard.REJECTION_MARKER),
+                    "The guard must reject a database that is not allow-listed, but got: "
+                            + describeChain(thrown));
+            assertTrue(describeChain(thrown).contains("ci_isolated_test_db"),
+                    "The rejection must name the database read from the Config Data file: "
+                            + describeChain(thrown));
+        } finally {
+            deleteRecursively(configDir);
+        }
+    }
+
+    /**
+     * Minimal application source. It deliberately has no auto-configuration, so the
+     * context contains no DataSource, Flyway, or JPA beans and needs no database - while
+     * the environment post-processors, including the guard, still run.
+     */
+    @org.springframework.context.annotation.Configuration
+    static class GuardProbeApp {
     }
 
     /** The guard must be wired through spring.factories, which is how Boot discovers it. */
