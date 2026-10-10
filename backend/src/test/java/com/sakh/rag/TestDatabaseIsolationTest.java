@@ -53,9 +53,11 @@ class TestDatabaseIsolationTest {
      * schema has a {@code vector_store} table - the number of rows in it is unchanged
      * by the write.
      *
-     * <p>This is a row-count comparison, not a content comparison: it proves no row was
-     * added or removed, not that existing rows were left byte-for-byte identical. An
-     * in-place update to an existing development row would not be detected here.
+     * <p>This is a net row-count comparison, not a content comparison. Equal counts
+     * before and after show only that the total number of rows is unchanged. They do
+     * not show that nothing was inserted or deleted, because an insertion paired with
+     * a deletion would leave the count identical, and they do not show that existing
+     * rows are unmodified, because an in-place update leaves the count untouched too.
      */
     @Test
     void vectorWritesLandInTheTestSchemaAndDoNotChangeTheDevelopmentSchemaRowCount() {
