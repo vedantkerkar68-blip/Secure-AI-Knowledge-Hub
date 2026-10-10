@@ -1,15 +1,15 @@
 # Access Control Policy
 
-**Project:** Secure AI Knowledge Hub (SAKH)  
-**Version:** 1.0  
-**Status:** Living document — reflects the agreed authorization policy  
-**Phase:** 2 — Access-Control Consistency  
+- **Project:** Secure AI Knowledge Hub (SAKH)
+- **Version:** 1.1
+- **Status:** Living document — reflects the implemented authorization policy
+- **Phase:** 2 — Access-Control Consistency
 
 ---
 
 ## 1. Purpose
 
-This document defines the authoritative authorization policy for document access and LLM processing in SAKH. It resolves the divergences identified in Phase 1 between `DocumentService` (document API) and `RetrieverService` (RAG retrieval).
+This document defines the authoritative authorization policy for document access and LLM processing in SAKH. It resolves the divergences identified in Phase 1 between `DocumentService` (document API) and `RetrieverService` (RAG retrieval), and records the behavior that is actually implemented today.
 
 ---
 
@@ -19,10 +19,13 @@ This document defines the authoritative authorization policy for document access
 
 | Decision | Question | Enforced By | Status |
 |----------|----------|-------------|--------|
-| **USER_CAN_VIEW** | May this user open/download this document? | `DocumentService` | ✅ CURRENT |
-| **LLM_CAN_PROCESS** | May this content enter the LLM context? | `RetrieverService` (Phase 2) | 🧭 PLANNED |
+| **USER_CAN_VIEW** | May this user open/download this document? | `DocumentAuthorizationService.checkDocumentViewAccess()` / `requireReadable()` | ✅ CURRENT |
+| **LLM_CAN_PROCESS (Phase 2 baseline)** | May this content enter the LLM context under the current rule — authorized **and** `READY`? | `DocumentAuthorizationService.isAccessibleForRag()`, applied by `RetrieverService` | ✅ CURRENT |
+| **LLM_PROCESS_PERMISSION** (separate tier) | May this content be processed independently of view access? | *new component* | 🧭 PLANNED (Phase 12) |
 
-**Rule:** `USER_CAN_VIEW` does **not** automatically imply `LLM_CAN_PROCESS`. A document may be viewable by a user but still forbidden from LLM processing (e.g., sensitive HR data that a manager can view but must not be sent to an external LLM).
+**Rule:** `USER_CAN_VIEW` does **not** automatically imply `LLM_CAN_PROCESS`. A document may be viewable by a user but still forbidden from LLM processing (e.g. sensitive HR data a manager can view but that must not be sent to an external LLM).
+
+> **Current vs. planned.** The Phase 2 baseline (`LLM_CAN_PROCESS = USER_CAN_VIEW`, plus the mandatory `READY` requirement in §5.4) **is implemented and enforced**. What remains *planned* is a separate, finer-grained processing-permission tier — a separate concept from the current rule, described in §8.
 
 ---
 
@@ -30,9 +33,9 @@ This document defines the authoritative authorization policy for document access
 
 | Role | Description |
 |------|-------------|
-| `ADMIN` | Full system access — all documents, all users, departments, activity logs |
-| `MANAGER` | Department-scoped access — documents in their department and sub-departments |
-| `EMPLOYEE` | Document upload and chat — department documents + own uploads |
+| `ADMIN` | Full document management access, all users, departments, activity logs. RAG retrieval still requires `READY` (§5.4). |
+| `MANAGER` | Department-scoped access — own department plus ancestor departments; may upload to their own subtree |
+| `EMPLOYEE` | Department documents plus their own uploads |
 | `GUEST` | Seeded role; **no enforcement branch exists** — treat as unprovisioned |
 
 > ⚠️ `GUEST` is seeded in the database (`V1__initial_schema.sql`) and documented in early specs, but the current authorization code has no `GUEST` branch in `RetrieverService` or `DocumentService`. Treat `GUEST` as unprovisioned until explicitly implemented.
@@ -48,45 +51,50 @@ A user may view/download a document if **any** of the following is true:
 | Condition | ADMIN | MANAGER | EMPLOYEE |
 |-----------|-------|---------|----------|
 | `accessScope = ALL` | ✅ | ✅ | ✅ |
-| Document in user's department | ✅ | ✅ | ✅ |
-| Document in ancestor department | ✅ | ✅ | ✅ |
-| Document in descendant department | ❌ | ✅ (subtree) | ❌ |
-| Document in unrelated department | ❌ | ❌ | ❌ |
-| Own upload (EMPLOYEE) | N/A | N/A | ✅ (only if `accessScope = DEPARTMENT`) |
+| Document in user's own department | ✅ | ✅ | ✅ |
+| Document in an ancestor department | ✅ | ✅ | ✅ |
+| Document in a descendant department | ✅ (any) | ❌ | ❌ |
+| Document in an unrelated department | ✅ (any) | ❌ | ❌ |
+| Own upload (`EMPLOYEE`) | N/A | N/A | ✅ (see note) |
 | Document status = READY | ✅ | ✅ | ✅ |
-| Document status ≠ READY | ✅ | ❌ (404) | ❌ (404) |
+| Document status ≠ READY | ✅ (management only) | ❌ (404) | ❌ (404) |
+
+> **Own upload note.** The own-upload exception applies to `EMPLOYEE` only, and only on the department-scoped path (`accessScope = DEPARTMENT`); `AccessScope = ALL` documents are already visible to everyone. Critically, it applies **identically in the document API and in RAG** — `checkDocumentViewAccess()` and `isAccessibleForRag()` contain the same own-upload fallback. The product question of whether this exception *should* exist outside the employee's department remains open (§10, #4).
+
+> **Descendant note.** `ADMIN` reaches every document regardless of department. For `MANAGER` and `EMPLOYEE`, read visibility is the user's own department **plus its ancestors only** — the descendant subtree is *not* included. Descendant/subtree scoping applies only to *upload targets* (§6). Whether `MANAGER` *should* see descendants is unresolved (§10, #3).
 
 ### 4.2 Department Hierarchy Semantics
 
 - **Ancestor chain:** User's department → parent → grandparent → ... → root
 - **Descendant subtree:** User's department → all children → grandchildren → ...
-- **Manager scope:** Own department + entire descendant subtree
-- **Employee scope:** Own department + ancestor chain only
+- **Read visibility (implemented):** own department + ancestor chain, applied identically to every non-`ADMIN` role
+- **Upload scope (implemented):** `MANAGER` may upload to their own department plus the entire descendant subtree
 - **ADMIN:** No department restrictions (null = no filter)
+
+**Cycle prevention:** `DepartmentService` validates no cycles on create/update.
 
 ### 4.3 Access Scope Semantics
 
 | Scope | Semantics | Who Can Set |
 |-------|-----------|-------------|
 | `ALL` | Visible to all authenticated users | ADMIN only |
-| `DEPARTMENT` (default) | Visible to the owning department and its sub-departments | ADMIN, MANAGER (forced to DEPARTMENT) |
+| `DEPARTMENT` (default) | Visible to the owning department and its ancestor departments | ADMIN, MANAGER (forced to DEPARTMENT) |
 
-**Rules:**
+**Enforcement:**
 - Only ADMIN may set `accessScope = ALL`
 - MANAGER uploads are forced to `DEPARTMENT` scope
 - EMPLOYEE cannot upload
 
-### 4.3 Document Status Filtering
+### 4.4 Document Status Filtering (document management)
 
-| Role | Document Status Filter (document management) |
+| Role | Document Status Filter |
 |------|---------------------------|
 | ADMIN | All statuses (PENDING, PROCESSING, READY, FAILED, ARCHIVED) |
 | MANAGER / EMPLOYEE | READY only (others return 404) |
 
 > **This table governs document management only** — preview, details, versions,
 > download, status inspection, and other document-API operations. It does **not**
-> grant LLM-processing eligibility. See §5.4 for that, which is stricter and applies
-> to every role.
+> grant LLM-processing eligibility. See §5.4, which is stricter and applies to every role.
 
 ---
 
@@ -94,32 +102,32 @@ A user may view/download a document if **any** of the following is true:
 
 ### 5.1 Core Principle
 
-> **LLM_CAN_PROCESS ⊆ USER_CAN_VIEW**
+> **LLM_CAN_PROCESS ⊆ USER_CAN_VIEW**, and additionally **LLM_CAN_PROCESS ⇒ document status is READY**.
 
-A document chunk may enter the LLM context **only if** the user has `USER_CAN_VIEW` for that document **AND** the document is approved for LLM processing.
+A document chunk may enter the LLM context only if the user is authorized for that document **AND** the document is `READY`.
 
-### 5.2 LLM Processing Authorization (Phase 2 — Minimum)
+### 5.2 LLM Processing Authorization (Phase 2 — implemented)
 
-For Phase 2, we enforce: **LLM_CAN_PROCESS = USER_CAN_VIEW**
+For Phase 2 the rule is: **LLM_CAN_PROCESS = USER_CAN_VIEW, and the document must be READY.**
 
-This means: the same visibility rules apply to RAG retrieval as to document API access. No separate LLM-processing tier yet (that's Phase 12).
+The same visibility rules apply to RAG retrieval as to document API access, with the additional unconditional readiness requirement in §5.4. No separate LLM-processing tier exists yet; that remains planned for Phase 12 (§8).
+
+Enforcement is centralized in `DocumentAuthorizationService.isAccessibleForRag()`, which is applied by `RetrieverService` on **both** the global hybrid path and the document-scoped path. The method **fails closed**: a null document, a null user, or any non-`READY` document returns `false` rather than throwing.
 
 ### 5.3 Retrieval Filtering Rules (Unified)
+
+Applied after the readiness gate in §5.4, i.e. to `READY` documents only:
 
 | Condition | ADMIN | MANAGER | EMPLOYEE |
 |-----------|-------|---------|----------|
 | `accessScope = ALL` | ✅ | ✅ | ✅ |
-| Document in user's department | ✅ | ✅ | ✅ |
-| Document in ancestor department | ✅ | ✅ | ✅ |
-| Document in descendant department | ❌ | ✅ (subtree) | ❌ |
-| Document in unrelated department | ❌ | ❌ | ❌ |
-| Own upload (EMPLOYEE) | N/A | N/A | ✅ (if DEPT scope) |
-| Document status = READY | ✅ | ✅ | ✅ |
+| Document in user's own department | ✅ | ✅ | ✅ |
+| Document in an ancestor department | ✅ | ✅ | ✅ |
+| Document in a descendant department | ✅ (any) | ❌ | ❌ |
+| Document in an unrelated department | ✅ (any) | ❌ | ❌ |
+| Own upload | N/A | N/A | ✅ (if `DEPARTMENT` scope) |
 
-**Key changes from current RetrieverService:**
-1. `accessScope = ALL` is now honored in retrieval
-2. Ancestor departments are now visible (was exact match only)
-3. EMPLOYEE own-upload visibility retained (but only if document is in allowed department tree or accessScope=ALL)
+**Notes on candidate generation:** the vector filter and the keyword query are deliberately *permissive* for recall (shared scope, department chain, own upload), and are followed by the authoritative `isAccessibleForRag()` check on every merged chunk. Candidate filtering is never the authorization boundary.
 
 ### 5.4 Document Readiness for RAG (Applies to ALL Roles)
 
@@ -142,7 +150,7 @@ generated answer.
 
 | Concern | Governed by | ADMIN rule |
 |---------|--------------|------------|
-| **Document management** (can this user open/download/inspect this document?) | §4.1, §4.3 | Any status permitted |
+| **Document management** (can this user open/download/inspect this document?) | §4.1, §4.4 | Any status permitted |
 | **LLM processing** (may this content enter the prompt?) | §5.2, §5.3, **§5.4** | READY required, no bypass |
 
 `ADMIN` is therefore still able to preview, download, re-inspect and troubleshoot a
@@ -158,6 +166,8 @@ content can be retrieved into a chat prompt by anyone, administrators included.
   `isAccessibleForRag()` check remains authoritative for RAG.
 - `requireReadable()` deliberately still exempts `ADMIN`, because it backs document
   management. It must not be treated as the RAG readiness gate.
+- In global retrieval, authorization is applied **before** the final `topK` cut, so
+  permissive candidates cannot displace authorized chunks from the result set.
 
 ---
 
@@ -171,63 +181,38 @@ content can be retrieved into a chat prompt by anyone, administrators included.
 
 ---
 
-## 7. Department Hierarchy Semantics
-
-| Concept | Definition |
-|---------|------------|
-| **Ancestor chain** | Department → parent → parent's parent ... up to root |
-| **Descendant subtree** | Department + all children + grandchildren + ... |
-| **Manager scope** | Own department + entire descendant subtree |
-| **Employee scope** | Own department + ancestor chain only |
-| **ADMIN** | No restrictions (sees all) |
-
-**Cycle prevention:** `DepartmentService` validates no cycles on create/update.
-
----
-
-## 7. Access Scope Semantics (Detailed)
-
-| Scope | Semantics | Who Can Set |
-|-------|-----------|-------------|
-| `ALL` | Visible to all authenticated users | ADMIN only |
-| `DEPARTMENT` (default) | Visible to the owning department and its sub-departments | ADMIN, MANAGER (forced to DEPARTMENT) |
-
-**Enforcement:**
-- Only ADMIN may set `accessScope = ALL`
-- MANAGER uploads are forced to `DEPARTMENT` scope
-- EMPLOYEE cannot upload
-
----
-
-## 8. LLM Processing Boundary (Future — Phase 12)
-
-> **This section documents the planned boundary. Not implemented in Phase 2.**
-
-| Decision | Question | Enforced By | Status |
-|----------|----------|-------------|--------|
-| User view access | May this user open/download this document? | `DocumentService` | ✅ CURRENT |
-| LLM processing access | May this content enter the LLM context? | *new component* | 🧭 PLANNED (Phase 12) |
-
-**Future requirements (Phase 12):**
-1. Must be a **backend security boundary**, not prompt wording.
-2. Must be evaluated **per retrieved chunk**, on both the semantic and keyword paths, and for document-scoped retrieval.
-3. Must be auditable — decisions recorded in `activity_logs`.
-4. Must be covered by security regression tests (`SEC-09` in `docs/RAG_EVALUATION.md`).
-5. **Fail closed**: on error, deny. It must never default to allow.
-6. Enforced during ingestion as well, so content that must not be processed is excluded from embedding in the first place where that is possible.
-
----
-
-## 8. Enforcement Points
+## 7. Enforcement Points
 
 | Layer | Component | Responsibility |
 |-------|-----------|----------------|
 | HTTP | `SecurityConfig` | JWT validation, route-level RBAC |
 | Controller | `@PreAuthorize` | Role-based endpoint access |
-| Service (Doc) | `DocumentAuthorizationService` | `checkDocumentViewAccess()`, `requireReadable()`, `resolveVisibleDepartmentIds()` |
-| Service (RAG) | `RetrieverService` | `isAccessibleForRag()`, `buildVectorFilterExpression()` |
-| Ingestion | `DocumentService.validateUploadTarget()` | Upload target validation |
-| Ingestion (future) | *new component* | LLM-processing eligibility at ingestion |
+| Service (Doc) | `DocumentAuthorizationService` | `checkDocumentViewAccess()`, `requireReadable()`, `getVisibleDepartmentIds()`, `getUploadableDepartmentIds()` |
+| Service (RAG) | `DocumentAuthorizationService` → `RetrieverService` | `isAccessibleForRag()` (authoritative), `buildVectorFilterExpression()` (candidate recall only) |
+| Ingestion | `DocumentAuthorizationService.validateUploadTarget()` | Upload target validation |
+| Test isolation | `TestDatabaseSafetyGuard` | Prevents the test suite from targeting a production database |
+
+---
+
+## 8. Planned Future Processing Boundary (Phase 12)
+
+> **Nothing in this section is implemented.** The Phase 2 baseline in §5.2 and §5.4
+> **is** implemented and enforced today. What is planned is a *separate*,
+> finer-grained processing-permission tier — distinct from the current rule.
+
+| Decision | Question | Enforced By | Status |
+|----------|----------|-------------|--------|
+| User view access | May this user open/download this document? | `DocumentAuthorizationService` | ✅ CURRENT |
+| LLM eligibility (Phase 2 rule) | May this content enter the prompt under the current rule? | `DocumentAuthorizationService.isAccessibleForRag()` | ✅ CURRENT |
+| Independent processing permission | May this content be processed regardless of view access? | *new component* | 🧭 PLANNED (Phase 12) |
+
+**Future requirements (Phase 12):**
+1. Must be a **backend security boundary**, not prompt wording.
+2. Must be evaluated **per retrieved chunk**, on both the semantic and keyword paths, and for document-scoped retrieval.
+3. Must be auditable — decisions recorded in `activity_logs`.
+4. Must be covered by security regression tests (referred to as `SEC-09` in the local-only `docs/RAG_EVALUATION.md`).
+5. **Fail closed**: on error, deny. It must never default to allow.
+6. Enforced during ingestion as well, so content that must not be processed is excluded from embedding in the first place where that is possible.
 
 ---
 
@@ -242,42 +227,60 @@ content can be retrieved into a chat prompt by anyone, administrators included.
 
 ## 10. Unresolved Ambiguities
 
-| # | Ambiguity | Decision Needed |
-|---|-----------|-----------------|
-| 1 | GUEST role semantics | Is GUEST a supported role? If so, what are its permissions? |
-| 2 | LLM_PROCESSING separate tier | Should `accessScope` have a third value `LLM_ONLY` or similar? |
-| 3 | Manager ancestor visibility | Should MANAGER see ancestor departments? (Currently: no) |
-| 4 | Employee own-upload outside dept | Should EMPLOYEE see their own uploads even in other departments? (Currently: yes in RAG, no in API) |
+These are **open product decisions**, deliberately preserved. The "Currently" column
+records implemented behaviour; it is not a recommendation.
+
+| # | Ambiguity | Currently implemented | Decision Needed |
+|---|-----------|------------------------|-----------------|
+| 1 | GUEST role semantics | No `GUEST` branch exists; treated as unprovisioned | Is GUEST a supported role? If so, what are its permissions? |
+| 2 | LLM_PROCESSING separate tier | Not implemented; Phase 2 rule is authorized + READY (§5.2) | Should a third access-scope value such as `LLM_ONLY` exist? |
+| 3 | MANAGER descendant visibility | **Not** implemented: MANAGER sees own department + ancestors only (§4.1) | Should MANAGER also see descendant departments? |
+| 4 | EMPLOYEE own-upload outside department | **Implemented in both** the document API and RAG: own uploads are reachable from any department (§4.1) | Should EMPLOYEE see their own uploads even in other departments? |
 
 **Resolved (previously contradictory):**
 
 | Question | Decision |
 |----------|----------|
-| Does `ADMIN`'s all-status document privilege extend to RAG? | **No.** `ADMIN` may retrieve content into a prompt only when the document is READY (§5.4). `ADMIN` retains all-status access for document management (§4.3). |
-
-> **Decision:** For Phase 2, we implement the policy as documented above. Ambiguities 1, 2, 3, 4 are documented for future resolution. Current implementation follows the tables in Section 4.1 and 5.3, and the readiness rule in 5.4.
+| Does `ADMIN`'s all-status document privilege extend to RAG? | **No.** `ADMIN` may retrieve content into a prompt only when the document is READY (§5.4). `ADMIN` retains all-status access for document management (§4.4). |
+| Does `AccessScope = ALL` bypass readiness? | **No.** Shared visibility never bypasses the readiness gate (§5.4). |
 
 ---
 
 ## 11. Related Documents
 
+This repository intentionally keeps most project documentation **local-only**
+(`.gitignore` excludes `docs/*` except screenshots and this policy). Only the
+documents below are available on GitHub; the remainder are referenced for local
+readers and will not resolve as links for anyone cloning the repository.
+
+### Tracked in GitHub
+
 | Document | Relevance |
 |----------|-----------|
-| `docs/06_BASELINE_AND_DIAGNOSTICS.md` | Baseline findings |
-| `docs/architecture/ARCHITECTURE.md` | Current implementation gaps |
-| `docs/RAG_ARCHITECTURE.md` | Current RAG pipeline vs. planned improvements |
-| `docs/RAG_EVALUATION.md` | Phase 1 methodology and gates |
-| `docs/INGESTION_PIPELINE.md` | Phase 5A |
+| `README.md` | Security architecture summary and the readiness invariant |
+| `CHANGELOG.md` | Record of the Phase 2 authorization changes |
+| `docs/06_BASELINE_AND_DIAGNOSTICS.md` | Phase 1 baseline findings this policy resolves |
+| `docs/07_ACCESS_CONTROL_POLICY.md` | This document |
+
+### Local-only (not tracked in GitHub)
+
+| Document | Relevance |
+|----------|-----------|
 | `docs/SECURITY.md` | Phases 2 and 12 |
-| `docs/14_DEVELOPMENT_ROADMAP.md` | Phases 2 and 12 |
+| `docs/RAG_EVALUATION.md` | Phase 1 methodology, gates, `SEC-09` |
+| `docs/RAG_ARCHITECTURE.md` | Current RAG pipeline vs. planned improvements |
+| `docs/ARCHITECTURE.md` | Implementation gaps |
+| `docs/INGESTION_PIPELINE.md` | Phase 5A |
+| `docs/14_DEVELOPMENT_ROADMAP.md` | Phase definitions |
+| `docs/vision/PROJECT_SPEC.md` | Source of the `USER ACCESS != LLM PROCESSING ACCESS` principle |
 
 ---
 
 ## 12. Approval
 
-This policy is derived from existing code behavior, documented requirements in `docs/14_DEVELOPMENT_ROADMAP.md`, and the security principle `USER ACCESS != LLM PROCESSING ACCESS` established in `docs/vision/PROJECT_SPEC.md`.
+This policy is derived from the implemented behavior in `DocumentAuthorizationService` and `RetrieverService`, from documented requirements in the local-only `docs/14_DEVELOPMENT_ROADMAP.md`, and from the security principle `USER ACCESS != LLM PROCESSING ACCESS` established in the local-only `docs/vision/PROJECT_SPEC.md`.
 
-**Status:** Ready for implementation review.
+**Status:** Reflects implemented Phase 2 behavior. Open product decisions are retained in §10.
 
 ---
 
