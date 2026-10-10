@@ -68,8 +68,7 @@ class TestDatabaseIsolationTest {
         when(embeddingModel.embed(any(Document.class))).thenReturn(embedding);
         when(embeddingModel.embed(anyString())).thenReturn(embedding);
 
-        Long publicBefore = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM public.vector_store", Long.class);
+        Long publicBefore = developmentVectorStoreRowCount();
 
         vectorStore.add(List.of(Document.builder()
                 .text("isolation probe")
@@ -87,13 +86,35 @@ class TestDatabaseIsolationTest {
                     Long.class, PROBE_DOCUMENT_ID);
             assertEquals(1L, inTestSchema, "The vector write must land in the sakh_test schema");
 
-            Long publicAfter = jdbcTemplate.queryForObject(
-                    "SELECT count(*) FROM public.vector_store", Long.class);
-            assertEquals(publicBefore, publicAfter,
-                    "The shared development vector_store must not be modified by tests");
+            if (publicBefore != null) {
+                assertEquals(publicBefore, developmentVectorStoreRowCount(),
+                        "The shared development vector_store must not be modified by tests");
+            }
         } finally {
             jdbcTemplate.update("DELETE FROM sakh_test.vector_store WHERE metadata ->> 'documentId' = ?",
                     PROBE_DOCUMENT_ID);
         }
+    }
+
+    /**
+     * Row count of the shared development schema's vector_store, or {@code null} when
+     * that schema has no vector_store table.
+     *
+     * <p>Flyway only creates migration objects in {@code sakh_test}, so on an isolated
+     * CI database - the configuration application-test.yml documents and the guard
+     * allow-lists - {@code public.vector_store} legitimately does not exist. Querying
+     * it unconditionally would make this test error there rather than assert isolation.
+     * When the table is absent there is nothing to protect, which is why the caller
+     * treats {@code null} as "no development data present" instead of a failure.
+     */
+    private Long developmentVectorStoreRowCount() {
+        Long tables = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM information_schema.tables "
+                        + "WHERE table_schema = 'public' AND table_name = 'vector_store'",
+                Long.class);
+        if (tables == null || tables == 0L) {
+            return null;
+        }
+        return jdbcTemplate.queryForObject("SELECT count(*) FROM public.vector_store", Long.class);
     }
 }

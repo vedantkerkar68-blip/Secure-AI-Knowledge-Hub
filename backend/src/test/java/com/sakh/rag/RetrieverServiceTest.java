@@ -40,12 +40,23 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Regression tests for RAG candidate generation vs. the centralized
- * authorization policy in {@link DocumentAuthorizationService}.
+ * Unit tests for RAG candidate generation vs. the centralized authorization policy in
+ * {@link DocumentAuthorizationService}.
  *
- * <p>Candidate generation must be a superset of the permitted set (recall), and
- * the centralized {@code isAccessibleForRag} filter must still remove every
- * unauthorized chunk before it can reach the LLM prompt (security).
+ * <p>Scope of this class - what it does and does not prove:
+ * <ul>
+ *   <li>It DOES prove the final centralized {@code isAccessibleForRag} filter removes
+ *       unauthorized chunks before they can reach the LLM prompt: here the candidate
+ *       sources are controlled, so the authorization decision is the thing under test.</li>
+ *   <li>It does NOT prove the semantic filter expression actually selects the right
+ *       vectors. {@code VectorStore} is mocked and returns fixed results regardless of
+ *       the filter, so these tests cannot demonstrate filter effectiveness.</li>
+ * </ul>
+ *
+ * <p>Those two concerns are covered elsewhere: the filter's textual content is asserted
+ * in {@code DocumentAuthorizationServiceTest} (including that the real
+ * {@code SearchRequest} parser accepts it), and its effect against a real PgVectorStore
+ * and database is proven in {@code RagRetrievalCompatibilityIntegrationTest}.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)

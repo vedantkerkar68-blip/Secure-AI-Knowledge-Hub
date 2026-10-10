@@ -61,8 +61,14 @@ class TestDatabaseSafetyWiringTest {
                 true));
     }
 
+    /**
+     * Covers the missing-datasource fail-closed path, not a rejected target: a
+     * non-existent {@code spring.config.name} means no application-test.yml is
+     * loaded, so the {@code test} profile has no {@code spring.datasource.url} at
+     * all. That must abort startup rather than silently skip validation.
+     */
     @Test
-    void aRejectedTargetNeverOpensADatabaseConnection() {
+    void missingDatasourceUrlUnderTestProfile_failsClosedBeforeAnyDatabaseAccess() {
         Throwable thrown = org.junit.jupiter.api.Assertions.assertThrows(Throwable.class,
                 () -> new SpringApplicationBuilder(BackendApplication.class)
                         .profiles("test")

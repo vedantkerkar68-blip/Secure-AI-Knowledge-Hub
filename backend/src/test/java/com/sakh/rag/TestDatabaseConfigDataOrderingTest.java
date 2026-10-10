@@ -90,7 +90,6 @@ class TestDatabaseConfigDataOrderingTest {
     }
 
     /**
-     /**
      * A safe datasource supplied through a temporary Config Data file must be accepted
      * by the guard, and the decision must demonstrably come from that file.
      *
@@ -186,21 +185,33 @@ class TestDatabaseConfigDataOrderingTest {
 
     /** The guard must be wired through spring.factories, which is how Boot discovers it. */
     @Test
-    void guardIsDeclaredInASpringFactoriesFile() throws Exception {
-        var found = new ArrayList<String>();
+    void guardIsDeclaredUnderTheEnvironmentPostProcessorFactoryKey() throws Exception {
+        String guardClassName = TestDatabaseSafetyEnvironmentPostProcessor.class.getName();
+        String factoryKey = "org.springframework.boot.env.EnvironmentPostProcessor";
+
+        var declarations = new ArrayList<String>();
         var loader = getClass().getClassLoader();
         var resources = loader.getResources("META-INF/spring.factories");
         while (resources.hasMoreElements()) {
-            try (var in = resources.nextElement().openStream()) {
+            var url = resources.nextElement();
+            try (var in = url.openStream()) {
                 String content = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-                if (content.contains(TestDatabaseSafetyEnvironmentPostProcessor.class.getName())) {
-                    found.add(resources.toString());
+                if (content.contains(guardClassName)) {
+                    declarations.add(url + " -> " + content.strip());
                 }
             }
         }
-        assertTrue(!found.isEmpty(),
-                "The guard must be declared under " + "org.springframework.boot.env.EnvironmentPostProcessor"
-                        + " in a META-INF/spring.factories file");
+
+        assertTrue(!declarations.isEmpty(),
+                "The guard must be declared in a META-INF/spring.factories file, but found: " + declarations);
+
+        // Declaring the class name is not enough: Spring Boot only instantiates it when it
+        // is listed under the EnvironmentPostProcessor factory key.
+        for (String declaration : declarations) {
+            assertTrue(declaration.contains(factoryKey),
+                    "The guard must be declared under the '" + factoryKey
+                            + "' factory key, but the declaration was: " + declaration);
+        }
     }
 
     private static void assertFalseInStack(Throwable throwable, String packagePrefix, String message) {
