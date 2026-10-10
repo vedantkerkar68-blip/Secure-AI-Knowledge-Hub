@@ -263,6 +263,74 @@ class RetrieverServiceTest {
                 "An unrecognised access scope must not be treated as shared access");
     }
 
+    /**
+     * Candidate generation is permissive for recall: the vector filter has no status
+     * clause, so a document in the user's own department that is not READY can still
+     * produce candidate chunks. Those candidates must be discarded by the authoritative
+     * authorization check WITHOUT consuming the topK window and pushing authorized
+     * chunks that ranked just below it out of the result set.
+     */
+    @Test
+    void retrieve_notReadableCandidatesDoNotDisplaceAuthorizedChunks() {
+        User user = user("emp@sakh.com", "EMPLOYEE", CHILD_DEPT_ID);
+
+        // High-scoring candidates from a document the user can see by department but
+        // that is NOT READY, so the authoritative check rejects them.
+        com.sakh.entity.Document notReady = entityDocument(910L, CHILD_DEPT_ID, AccessScope.DEPARTMENT,
+                DocumentStatus.PROCESSING, "owner@sakh.com");
+        // Authorized READY document whose chunks rank lower.
+        com.sakh.entity.Document ready = entityDocument(911L, CHILD_DEPT_ID, AccessScope.DEPARTMENT,
+                DocumentStatus.READY, "owner@sakh.com");
+
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(
+                chunkDoc(1L, notReady.getId(), 0.95),
+                chunkDoc(2L, notReady.getId(), 0.90),
+                chunkDoc(3L, ready.getId(), 0.50),
+                chunkDoc(4L, ready.getId(), 0.40)));
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(List.of());
+        when(documentRepository.findAllById(any())).thenReturn(List.of(notReady, ready));
+
+        // topK = 2, so fetchSize = 4 and all four candidates are ranked before authorizing.
+        List<Document> results = retriever.retrieve("policy", user, 2);
+
+        assertEquals(2, results.size(),
+                "Authorized chunks ranked just below unauthorized ones must still be returned");
+        for (Document d : results) {
+            assertEquals(ready.getId(), ((Number) d.getMetadata().get("documentId")).longValue(),
+                    "Only the READY, authorized document may appear: " + results);
+        }
+    }
+
+    private static Document chunkDoc(Long chunkId, Long documentId, double score) {
+        return Document.builder()
+                .text("chunk " + chunkId)
+                .metadata(java.util.Map.of("chunkId", chunkId, "documentId", documentId))
+                .score(score)
+                .build();
+    }
+
+    /**
+     * Structural guard: the semantic-only overload that once existed on
+     * {@link RetrieverService} (and bypassed user-aware authorization) was removed in
+     * 8112f1f. This prevents a semantic-only retrieval entry point being reintroduced,
+     * since every externally reachable retrieval path must take the requesting user.
+     */
+    @Test
+    void retrieverService_hasNoPublicRetrievalPathThatOmitsTheRequestingUser() {
+        for (java.lang.reflect.Method method : RetrieverService.class.getDeclaredMethods()) {
+            if (!java.lang.reflect.Modifier.isPublic(method.getModifiers())
+                    || !method.getName().startsWith("retrieve")) {
+                continue;
+            }
+            boolean takesUser = java.util.Arrays.stream(method.getParameterTypes())
+                    .anyMatch(com.sakh.entity.User.class::equals);
+            assertTrue(takesUser,
+                    "Public retrieval method '" + method.getName()
+                            + "' must accept the requesting User so centralized authorization applies");
+        }
+    }
+
     private Object captureFilter() {
         ArgumentCaptor<SearchRequest> captor = ArgumentCaptor.forClass(SearchRequest.class);
         verify(vectorStore).similaritySearch(captor.capture());

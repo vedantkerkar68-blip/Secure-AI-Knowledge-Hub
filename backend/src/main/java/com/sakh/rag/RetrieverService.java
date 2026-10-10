@@ -83,8 +83,15 @@ public class RetrieverService {
         List<Document> keywordResults = keywordSearch(rewritten, role, visibleDepartmentIds, user.getEmail(), fetchSize);
         logger.debug("Keyword search returned {} results", keywordResults.size());
 
-        // Filter results through centralized authorization - optimize by checking per document, not per chunk
-        List<Document> merged = mergeAndRank(semanticResults, keywordResults, topK);
+        // Rank the whole candidate window, not just topK.
+        //
+        // Candidate generation is deliberately permissive for recall: the vector filter has
+        // no status clause, so chunks of a document in the user's own department that is not
+        // READY can still be returned by the vector store. Cutting the window down to topK
+        // before the authoritative check below let such chunks consume the topK slots and
+        // permanently discard authorized chunks that had ranked just below them.
+        // Authorize first, then cap to topK. The window stays bounded at fetchSize.
+        List<Document> merged = mergeAndRank(semanticResults, keywordResults, fetchSize);
         
         // Collect distinct document IDs to avoid repeated DB queries
         Set<Long> distinctDocIds = merged.stream()
@@ -116,6 +123,7 @@ public class RetrieverService {
                     }
                     return false;
                 })
+                .limit(topK)
                 .toList();
 
         long elapsed = System.currentTimeMillis() - start;
