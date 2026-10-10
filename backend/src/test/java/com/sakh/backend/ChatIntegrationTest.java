@@ -19,6 +19,7 @@ import com.sakh.repository.DocumentRepository;
 import com.sakh.repository.RoleRepository;
 import com.sakh.repository.UserRepository;
 import com.sakh.service.ChatService;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Execution;
@@ -91,15 +92,15 @@ class ChatIntegrationTest {
 
     private static Long docId;
 
-    @BeforeEach
-    void initDocId() {
+    @BeforeAll
+    static void initDocId() {
         docId = System.currentTimeMillis() + (long)(Math.random() * 10000);
     }
 
     @BeforeEach
     void setUp() {
         // Clear SecurityContext to avoid leakage between tests
-        // SecurityContextHolder.clearContext() - not needed with @WithMockUser
+        // SecurityContextHolder.clearContext() - not needed with manual auth setup
     }
 
     private ChatSession setupTestSession() {
@@ -155,6 +156,7 @@ class ChatIntegrationTest {
 
         // Mock documentRepository to return the document
         when(documentRepository.findById(docId)).thenReturn(java.util.Optional.of(entityDoc));
+        when(documentRepository.findAllById(any(Iterable.class))).thenReturn(List.of(entityDoc));
 
         // Mock chunkRepository to return empty results for keyword search
         when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt())).thenReturn(List.of());
@@ -165,6 +167,7 @@ class ChatIntegrationTest {
                 .text("Company policy requires 30 days notice for resignation.")
                 .metadata(Map.of(
                         "documentId", docId,
+                        "chunkId", docId,  // use same ID for chunkId
                         "chunkIndex", 0,
                         "pageNumber", 1,
                         "sectionTitle", "Resignation Policy",

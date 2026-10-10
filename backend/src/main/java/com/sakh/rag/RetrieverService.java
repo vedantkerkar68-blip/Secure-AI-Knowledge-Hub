@@ -54,29 +54,6 @@ public class RetrieverService {
         this.authorizationService = authorizationService;
     }
 
-    public List<Document> retrieve(String question, Long departmentId, int topK) {
-        long start = System.currentTimeMillis();
-        String rewritten = queryRewriter.rewrite(question);
-
-        logger.info("Semantic-only retrieval - question: '{}' (rewritten: '{}'), department: {}, topK: {}",
-                question, rewritten, departmentId, topK);
-
-        SearchRequest.Builder builder = SearchRequest.builder()
-                .query(rewritten)
-                .topK(topK);
-
-        if (departmentId != null) {
-            builder.filterExpression("departmentId == " + departmentId);
-        }
-
-        List<Document> results = vectorStore.similaritySearch(builder.build());
-
-        long elapsed = System.currentTimeMillis() - start;
-        logger.info("Retrieved {} chunks in {}ms", results.size(), elapsed);
-
-        return results;
-    }
-
     public List<Document> retrieve(String question, User user, int topK) {
         long start = System.currentTimeMillis();
         String rewritten = queryRewriter.rewrite(question);

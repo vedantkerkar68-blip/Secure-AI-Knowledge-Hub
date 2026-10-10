@@ -7,6 +7,7 @@ import com.sakh.entity.User;
 import com.sakh.enums.AccessScope;
 import com.sakh.enums.DocumentStatus;
 import com.sakh.enums.UserStatus;
+import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.service.DepartmentService;
 import com.sakh.repository.DepartmentRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -188,6 +190,53 @@ class DocumentAuthorizationServiceTest {
         User employeeInChild = createUser(createRole("EMPLOYEE"), deptC, "empChild@test.com");
         Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, manager);
         assertTrue(authorizationService.isAccessibleForRag(doc, employeeInChild));
+    }
+
+    // M. EMPLOYEE with no department can access their own READY upload
+    @Test
+    void isAccessibleForRag_employeeNoDept_ownUploadReady_allowed() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, employeeNoDept);
+        assertTrue(authorizationService.isAccessibleForRag(doc, employeeNoDept));
+    }
+
+    // N. EMPLOYEE with no department cannot access their own non-READY upload
+    @Test
+    void isAccessibleForRag_employeeNoDept_ownUploadNotReady_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.PENDING, deptA, employeeNoDept);
+        assertFalse(authorizationService.isAccessibleForRag(doc, employeeNoDept));
+    }
+
+    // O. EMPLOYEE with no department cannot access other users' documents
+    @Test
+    void isAccessibleForRag_employeeNoDept_otherUserDoc_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, employee);
+        assertFalse(authorizationService.isAccessibleForRag(doc, employeeNoDept));
+    }
+
+    // P. checkDocumentViewAccess - employee with no department can access own READY upload
+    @Test
+    void checkDocumentViewAccess_employeeNoDept_ownUploadReady_allowed() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, employeeNoDept);
+        // Should not throw exception
+        authorizationService.checkDocumentViewAccess(doc, employeeNoDept);
+    }
+
+    // Q. checkDocumentViewAccess - employee with no department can access own upload even if non-READY
+    // (readiness is checked by requireReadable, not checkDocumentViewAccess)
+    @Test
+    void checkDocumentViewAccess_employeeNoDept_ownUploadNotReady_allowed() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.PENDING, deptA, employeeNoDept);
+        // Should not throw exception - readiness checked separately by requireReadable
+        authorizationService.checkDocumentViewAccess(doc, employeeNoDept);
+    }
+
+    // R. checkDocumentViewAccess - employee with no department denied for other user's doc
+    @Test
+    void checkDocumentViewAccess_employeeNoDept_otherUserDoc_denied() {
+        Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, deptA, employee);
+        assertThrows(ResourceNotFoundException.class, () -> {
+            authorizationService.checkDocumentViewAccess(doc, employeeNoDept);
+        });
     }
 
     private Document createDocument(AccessScope scope, DocumentStatus status, Department dept, User uploadedBy) {

@@ -50,11 +50,6 @@ public class DocumentAuthorizationService {
             return;
         }
 
-        // Non-admins need department membership
-        if (currentUser.getDepartment() == null || document.getDepartment() == null) {
-            throw new ResourceNotFoundException("Document not found");
-        }
-
         // Check department visibility: own department + ancestors
         List<Long> visibleDepartmentIds = getVisibleDepartmentIds(currentUser);
         if (!visibleDepartmentIds.contains(document.getDepartment().getId())) {
@@ -174,11 +169,6 @@ public class DocumentAuthorizationService {
                 return false;
             }
             return true;
-        }
-
-        // Non-admin users need department membership
-        if (user.getDepartment() == null || document.getDepartment() == null) {
-            return false;
         }
 
         // Non-admins may only access READY documents
