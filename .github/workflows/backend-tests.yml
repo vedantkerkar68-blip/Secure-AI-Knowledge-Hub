@@ -61,6 +61,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Must run before Maven. ubuntu-latest ships a JDK older than 21, and
+      # backend/pom.xml declares <java.version>21</java.version>, so without this
+      # step the compiler aborts with "release version 21 not supported".
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
