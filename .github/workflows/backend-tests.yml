@@ -1,0 +1,134 @@
+name: Backend Tests
+
+# Runs the backend suite against a disposable PostgreSQL + pgvector service
+# created for this CI run. It never uses a developer's or a production database.
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+# Least privilege: the job only needs to read the repository.
+permissions:
+  contents: read
+
+jobs:
+  backend-tests:
+    name: Backend tests (isolated postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Pinned to an explicit PostgreSQL major version with pgvector support.
+        # The application targets Java 21 / Spring Boot 3.5 / pgvector 3072-dim.
+        image: pgvector/pgvector:pg16
+        env:
+          # Disposable credentials for this CI run only. These are not secrets and
+          # are not connected to any real environment.
+          #
+          # The DATABASE is named sakh_test - the same as the SCHEMA created inside it.
+          # Both names are distinct PostgreSQL concepts: POSTGRES_DB creates the
+          # database, while flyway.default-schema creates the schema within it.
+          #
+          # sakh_test is chosen deliberately. It is already in TestDatabaseSafetyGuard's
+          # DEFAULT_ALLOWED_DATABASES, and `localhost` is already in its
+          # DEFAULT_ALLOWED_HOSTS, so no SAKH_TEST_DB_ALLOWED_* variables are needed.
+          #
+          # Defining SAKH_TEST_DB_ALLOWED_DATABASES here would be harmful: Spring Boot
+          # ranks OS environment variables above Config Data, so it would shadow the
+          # allow-list that TestDatabaseConfigDataOrderingTest writes into its own
+          # temporary application-test.yml, and that test would then fail.
+          POSTGRES_DB: sakh_test
+          POSTGRES_USER: sakh_ci
+          POSTGRES_PASSWORD: sakh_ci_disposable_pw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sakh_ci -d sakh_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      # currentSchema must match application-test.yml so that unqualified DDL/DML
+      # lands in sakh_test while the `vector` type still resolves from public.
+      SPRING_TEST_DATASOURCE_URL: jdbc:postgresql://localhost:5432/sakh_test?currentSchema=sakh_test,public
+      SPRING_TEST_DATASOURCE_USERNAME: sakh_ci
+      SPRING_TEST_DATASOURCE_PASSWORD: sakh_ci_disposable_pw
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Seed controlled development-schema sentinel
+        env:
+          PGPASSWORD: sakh_ci_disposable_pw
+        run: |
+          psql -h localhost -U sakh_ci -d sakh_test -v ON_ERROR_STOP=1 <<'SQL'
+          -- pgvector is database-scoped; create it up front.
+          CREATE EXTENSION IF NOT EXISTS vector;
+          CREATE SCHEMA IF NOT EXISTS sakh_test;
+
+          -- Create sakh_test.vector_store FIRST. Flyway's V6 uses
+          -- CREATE TABLE IF NOT EXISTS vector_store, which resolves through
+          -- search_path (sakh_test, public). If only public.vector_store existed,
+          -- V6 would skip creating the test-schema table.
+          CREATE TABLE IF NOT EXISTS sakh_test.vector_store (
+              id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+              content   TEXT,
+              metadata  JSONB,
+              embedding VECTOR(3072)
+          );
+
+          -- Controlled fixture in the DEVELOPMENT schema. TestDatabaseIsolationTest
+          -- asserts that vector writes targeting sakh_test leave every existing row
+          -- here - id, content, metadata and embedding - byte-for-byte unchanged.
+          CREATE TABLE IF NOT EXISTS public.vector_store (
+              id        UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+              content   TEXT,
+              metadata  JSONB,
+              embedding VECTOR(3072)
+          );
+
+          INSERT INTO public.vector_store (content, metadata, embedding)
+          SELECT 'ci-sentinel-a', '{"documentId":"0","accessScope":"ALL"}'::jsonb, NULL
+          WHERE NOT EXISTS (SELECT 1 FROM public.vector_store WHERE content = 'ci-sentinel-a');
+
+          INSERT INTO public.vector_store (content, metadata, embedding)
+          SELECT 'ci-sentinel-b', '{"documentId":"0","accessScope":"ALL"}'::jsonb, NULL
+          WHERE NOT EXISTS (SELECT 1 FROM public.vector_store WHERE content = 'ci-sentinel-b');
+          SQL
+
+      - name: Database safety and isolation tests
+        working-directory: backend
+        run: mvn -B test -Dtest=TestDatabaseSafetyGuardTest,TestDatabaseConfigDataOrderingTest,TestDatabaseSafetyWiringTest,TestDatabaseIsolationTest
+
+      # Uploaded before the full suite, because `mvn clean` below deletes target/
+      # and would otherwise destroy these reports before they are archived.
+      - name: Upload safety and isolation test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-safety-${{ github.run_id }}
+          path: backend/target/surefire-reports
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Full backend test suite
+        working-directory: backend
+        run: mvn -B clean test
+
+      - name: Upload full suite test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-full-${{ github.run_id }}
+          path: backend/target/surefire-reports
+          if-no-files-found: ignore
+          retention-days: 14
