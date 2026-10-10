@@ -108,9 +108,11 @@ A document chunk may enter the LLM context only if the user is authorized for th
 
 ### 5.2 LLM Processing Authorization (Phase 2 — implemented)
 
-For Phase 2 the rule is: **LLM_CAN_PROCESS = USER_CAN_VIEW, and the document must be READY.**
+For Phase 2 the rule is:
 
-The same visibility rules apply to RAG retrieval as to document API access, with the additional unconditional readiness requirement in §5.4. No separate LLM-processing tier exists yet; that remains planned for Phase 12 (§8).
+> **LLM_CAN_PROCESS = USER_CAN_VIEW AND document.status = READY**
+
+Both conditions must hold. The same visibility rules apply to RAG retrieval as to document API access, with the additional unconditional readiness requirement in §5.4. No independent processing-permission tier exists yet; that remains planned for Phase 12 (§8).
 
 Enforcement is centralized in `DocumentAuthorizationService.isAccessibleForRag()`, which is applied by `RetrieverService` on **both** the global hybrid path and the document-scoped path. The method **fails closed**: a null document, a null user, or any non-`READY` document returns `false` rather than throwing.
 
@@ -196,9 +198,11 @@ content can be retrieved into a chat prompt by anyone, administrators included.
 
 ## 8. Planned Future Processing Boundary (Phase 12)
 
-> **Nothing in this section is implemented.** The Phase 2 baseline in §5.2 and §5.4
-> **is** implemented and enforced today. What is planned is a *separate*,
-> finer-grained processing-permission tier — distinct from the current rule.
+> **The additional, independent processing-permission boundary described in this
+> section is planned and is not implemented.** The Phase 2 baseline in §5.2 and §5.4
+> — authorization plus `READY` status — **is** implemented and enforced today. The rows
+> marked ✅ CURRENT below describe that implemented baseline; the processing-permission
+> tier is the planned enhancement, and is distinct from the current rule.
 
 | Decision | Question | Enforced By | Status |
 |----------|----------|-------------|--------|
