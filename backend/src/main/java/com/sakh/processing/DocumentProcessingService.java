@@ -73,6 +73,7 @@ public class DocumentProcessingService {
                             metadata.put("pageNumber", chunk.getPageNumber());
 
                         metadata.put("uploadedBy", document.getUploadedBy().getEmail());
+                        metadata.put("accessScope", document.getAccessScope().name());
                         return org.springframework.ai.document.Document.builder()
         .text(chunk.getChunkText())
         .metadata(metadata)

@@ -20,7 +20,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -267,6 +269,82 @@ class DocumentAuthorizationServiceTest {
     void isAccessibleForRag_employeeWithDept_nullDocDepartmentOtherUser_denied() {
         Document doc = createDocument(AccessScope.DEPARTMENT, DocumentStatus.READY, null, employee);
         assertFalse(authorizationService.isAccessibleForRag(doc, employee));
+    }
+
+    // --- Candidate-generation filter (recall), used by RetrieverService.semanticSearch ---
+
+    // The vector filter must be a superset of the permitted set so that shared
+    // documents, ancestor departments, and own uploads all become candidates.
+    @Test
+    void buildVectorFilterExpression_employeeWithDept_includesSharedAncestorsAndOwnUploads() {
+        String filter = authorizationService.buildVectorFilterExpression(employee);
+
+        assertTrue(filter.contains("accessScope == 'ALL'"),
+                "Must admit shared documents as candidates: " + filter);
+        assertTrue(filter.contains("departmentId == 1"),
+                "Must include the visible department chain: " + filter);
+        assertTrue(filter.contains("uploadedBy == 'employee@test.com'"),
+                "Must admit the employee's own uploads: " + filter);
+    }
+
+    @Test
+    void buildVectorFilterExpression_ancestorChainIsIncluded() {
+        // Manager sits in deptC (3); ancestors are [1, 3]
+        User userInDeptC = createUser(createRole("EMPLOYEE"), deptC, "child@test.com");
+        String filter = authorizationService.buildVectorFilterExpression(userInDeptC);
+
+        assertTrue(filter.contains("departmentId == 1"),
+                "Must include ancestor departments: " + filter);
+        assertTrue(filter.contains("departmentId == 3"),
+                "Must include the user's own department: " + filter);
+    }
+
+    @Test
+    void buildVectorFilterExpression_employeeNoDept_isBoundedToSharedAndOwnUploads() {
+        String filter = authorizationService.buildVectorFilterExpression(employeeNoDept);
+
+        assertTrue(filter.contains("accessScope == 'ALL'"), filter);
+        assertTrue(filter.contains("uploadedBy == 'nodept@test.com'"), filter);
+        assertFalse(filter.contains("departmentId"),
+                "A department-less user must not trigger a department scan: " + filter);
+    }
+
+    @Test
+    void buildVectorFilterExpression_admin_isUnfiltered() {
+        assertNull(authorizationService.buildVectorFilterExpression(admin),
+                "ADMIN must not be restricted by a candidate filter");
+    }
+
+    @Test
+    void buildVectorFilterExpression_escapesQuoteInEmail() {
+        User tricky = createUser(createRole("EMPLOYEE"), deptA, "o'brien@test.com");
+        String filter = authorizationService.buildVectorFilterExpression(tricky);
+
+        // The Spring AI filter grammar escapes with a backslash, not SQL-style quote doubling.
+        assertTrue(filter.contains("uploadedBy == 'o\\'brien@test.com'"),
+                "Single quotes must be backslash-escaped to avoid filter injection: " + filter);
+    }
+
+    /**
+     * Regression guard: the expression is handed to SearchRequest, whose text parser
+     * rejects several otherwise plausible syntaxes (notably "in (...)"). This asserts
+     * the real parser accepts everything this builder can produce.
+     */
+    @Test
+    void buildVectorFilterExpression_isAcceptedBySearchRequestParser() {
+        List<User> users = List.of(admin, manager, employee, employeeNoDept,
+                createUser(createRole("MANAGER"), deptC, "mgr-c@test.com"),
+                createUser(createRole("EMPLOYEE"), deptA, "o'brien@test.com"));
+
+        for (User u : users) {
+            String filter = authorizationService.buildVectorFilterExpression(u);
+            if (filter == null) {
+                continue;
+            }
+            assertDoesNotThrow(() -> org.springframework.ai.vectorstore.SearchRequest.builder()
+                            .query("q").topK(1).filterExpression(filter).build(),
+                    "Filter produced for " + u.getEmail() + " must parse: " + filter);
+        }
     }
 
     private Document createDocument(AccessScope scope, DocumentStatus status, Department dept, User uploadedBy) {

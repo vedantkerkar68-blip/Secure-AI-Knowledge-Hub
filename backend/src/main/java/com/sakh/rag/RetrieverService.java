@@ -1,6 +1,7 @@
 package com.sakh.rag;
 
 import com.sakh.entity.User;
+import com.sakh.enums.AccessScope;
 import com.sakh.enums.DocumentStatus;
 import com.sakh.exception.ResourceNotFoundException;
 import com.sakh.repository.ChunkRepository;
@@ -66,10 +67,14 @@ public class RetrieverService {
 
         int fetchSize = topK * HYBRID_MULTIPLIER;
 
-        List<Document> semanticResults = semanticSearch(rewritten, role, departmentId, user.getEmail(), fetchSize);
+        List<Long> visibleDepartmentIds = "ADMIN".equals(role)
+                ? List.of()
+                : authorizationService.getVisibleDepartmentIds(user);
+
+        List<Document> semanticResults = semanticSearch(rewritten, user, fetchSize);
         logger.debug("Semantic search returned {} results", semanticResults.size());
 
-        List<Document> keywordResults = keywordSearch(rewritten, role, departmentId, user.getEmail(), fetchSize);
+        List<Document> keywordResults = keywordSearch(rewritten, role, visibleDepartmentIds, user.getEmail(), fetchSize);
         logger.debug("Keyword search returned {} results", keywordResults.size());
 
         // Filter results through centralized authorization - optimize by checking per document, not per chunk
@@ -136,7 +141,7 @@ public class RetrieverService {
 
         int fetchSize = topK * HYBRID_MULTIPLIER;
 
-        List<Document> semanticResults = semanticSearch(rewritten, role, departmentId, user.getEmail(), fetchSize, documentId);
+        List<Document> semanticResults = semanticSearch(rewritten, user, fetchSize, documentId);
         logger.debug("Scoped semantic search returned {} results", semanticResults.size());
 
         List<Document> keywordResults = keywordSearchInDocument(rewritten, documentId, fetchSize);
@@ -168,46 +173,42 @@ public class RetrieverService {
         authorizationService.requireReadable(document, user);
     }
 
-    private List<Document> semanticSearch(String question, String role, Long departmentId,
-                                          String email, int topK) {
+    /**
+     * Semantic candidate generation. The filter expression is produced by the
+     * centralized {@link DocumentAuthorizationService} so that candidate recall
+     * covers ancestor departments and the no-department own-upload case.
+     * ADMIN receives no filter (null).
+     *
+     * <p>This is a recall filter only. The authoritative authorization decision
+     * is always made afterwards by {@code isAccessibleForRag}.
+     */
+    private List<Document> semanticSearch(String question, User user, int topK) {
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
                 .topK(topK);
 
-        if ("ADMIN".equals(role)) {
-        } else if (departmentId != null) {
-            if ("MANAGER".equals(role) || email == null) {
-                builder.filterExpression("departmentId == " + departmentId);
-            } else {
-                builder.filterExpression("departmentId == " + departmentId
-                        + " || uploadedBy == '" + email.replace("'", "''") + "'");
-            }
+        String filter = authorizationService.buildVectorFilterExpression(user);
+        if (filter != null) {
+            builder.filterExpression(filter);
         }
 
         return vectorStore.similaritySearch(builder.build());
     }
 
-    private List<Document> semanticSearch(String question, String role, Long departmentId,
-                                          String email, int topK, Long documentId) {
+    /**
+     * Scoped semantic candidate generation. Access to the document has already
+     * been verified by {@link #verifyDocumentAccess} before this is called.
+     */
+    private List<Document> semanticSearch(String question, User user, int topK, Long documentId) {
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(question)
-                .topK(topK);
-
-        if (documentId != null) {
-            builder.filterExpression("documentId == " + documentId);
-        } else if (!"ADMIN".equals(role) && departmentId != null) {
-            if ("MANAGER".equals(role) || email == null) {
-                builder.filterExpression("departmentId == " + departmentId);
-            } else {
-                builder.filterExpression("departmentId == " + departmentId
-                        + " || uploadedBy == '" + email.replace("'", "''") + "'");
-            }
-        }
+                .topK(topK)
+                .filterExpression("documentId == " + documentId);
 
         return vectorStore.similaritySearch(builder.build());
     }
 
-    private List<Document> keywordSearch(String question, String role, Long departmentId,
+    private List<Document> keywordSearch(String question, String role, List<Long> visibleDepartmentIds,
                                          String email, int topK) {
         List<Object[]> rows = chunkRepository.findKeywordSearchGlobal(question, topK);
 
@@ -216,8 +217,9 @@ public class RetrieverService {
         for (Object[] row : rows) {
             Long rowDeptId = row[6] != null ? ((Number) row[6]).longValue() : null;
             String uploadedBy = row[7] != null ? row[7].toString() : null;
+            AccessScope rowScope = parseAccessScope(row[8]);
 
-            if (!isAccessible(role, departmentId, email, rowDeptId, uploadedBy)) {
+            if (!isCandidateAccessible(role, visibleDepartmentIds, email, rowDeptId, uploadedBy, rowScope)) {
                 continue;
             }
 
@@ -243,7 +245,7 @@ public class RetrieverService {
         String sectionTitle = row[5] != null ? row[5].toString() : null;
         Long rowDeptId = row[6] != null ? ((Number) row[6]).longValue() : null;
         String uploadedBy = row[7] != null ? row[7].toString() : null;
-        double rank = row[8] != null ? ((Number) row[8]).doubleValue() : 0.0;
+        double rank = row[9] != null ? ((Number) row[9]).doubleValue() : 0.0;
 
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("documentId", docId);
@@ -261,21 +263,55 @@ public class RetrieverService {
                 .build();
     }
 
-    private boolean isAccessible(String role, Long userDeptId, String email,
-                                 Long docDeptId, String uploadedBy) {
+    /**
+     * Candidate-level pre-filter that mirrors {@code DocumentAuthorizationService.isAccessibleForRag}.
+     *
+     * <p>This exists purely to keep the candidate set close to the permitted set
+     * (recall). It is deliberately permissive within the permitted scope and is
+     * never the authorization boundary: the final centralized
+     * {@code isAccessibleForRag} filter in {@link #retrieve} still runs over every
+     * merged chunk before it can reach the LLM prompt.
+     */
+    private boolean isCandidateAccessible(String role, List<Long> visibleDepartmentIds, String email,
+                                          Long docDeptId, String uploadedBy, AccessScope scope) {
         if ("ADMIN".equals(role)) {
             return true;
         }
-        if (userDeptId == null) {
-            return false;
-        }
-        if (docDeptId != null && docDeptId.equals(userDeptId)) {
+
+        // Documents shared with everyone are permitted regardless of department.
+        if (scope == AccessScope.ALL) {
             return true;
         }
+
+        // Own department + ancestors (for a department-less user this set is the
+        // [-1] sentinel, which never matches a real department id).
+        if (docDeptId != null && visibleDepartmentIds.contains(docDeptId)) {
+            return true;
+        }
+
+        // An employee can always reach their own uploads, including when their
+        // account has no department assigned.
         return "EMPLOYEE".equals(role)
                 && email != null
                 && uploadedBy != null
                 && uploadedBy.equalsIgnoreCase(email);
+    }
+
+    /**
+     * Parses the raw {@code documents.access_scope} value from the native query.
+     * An unrecognised or missing value fails closed to {@link AccessScope#DEPARTMENT},
+     * the restrictive default, rather than aborting the whole retrieval.
+     */
+    private static AccessScope parseAccessScope(Object raw) {
+        if (raw == null) {
+            return AccessScope.DEPARTMENT;
+        }
+        try {
+            return AccessScope.valueOf(raw.toString().trim());
+        } catch (IllegalArgumentException e) {
+            logger.warn("Unrecognised access scope '{}' - treating as DEPARTMENT", raw);
+            return AccessScope.DEPARTMENT;
+        }
     }
 
     private List<Document> mergeAndRank(List<Document> semantic, List<Document> keyword, int topK) {

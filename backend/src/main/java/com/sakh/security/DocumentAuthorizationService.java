@@ -206,32 +206,58 @@ public class DocumentAuthorizationService {
     /**
      * Builds a pgvector filter expression for the given user.
      * Returns null for ADMIN (no filter).
+     *
+     * <p>This is a recall filter for candidate generation, not the authorization
+     * boundary. It is a permissive superset of {@link #isAccessibleForRag}: the
+     * shared-scope clause and the own-upload clause may admit chunks that the
+     * role or document status later rejects, which is safe because every merged
+     * chunk is re-checked by {@code isAccessibleForRag} before it reaches the LLM.
      */
     public String buildVectorFilterExpression(User user) {
         String role = user.getRole() != null ? user.getRole().getName() : "";
         Long departmentId = user.getDepartment() != null ? user.getDepartment().getId() : null;
         String email = user.getEmail();
 
-        if ("ADMIN".equals(user.getRole() != null ? user.getRole().getName() : "")) {
+        if ("ADMIN".equals(role)) {
             return null;
         }
 
+        String escapedEmail = escapeFilterLiteral(email);
+
         if (departmentId == null) {
-            // User has no department - only own uploads
-            return "uploadedBy == '" + email.replace("'", "''") + "'";
+            // User has no department - shared documents plus their own uploads
+            return "accessScope == 'ALL' || uploadedBy == '" + escapedEmail + "'";
         }
 
         // Get visible department IDs (own + ancestors)
         List<Long> visibleDeptIds = getVisibleDepartmentIds(user);
 
         if (visibleDeptIds.isEmpty() || visibleDeptIds.contains(-1L)) {
-            return "uploadedBy == '" + email.replace("'", "''") + "'";
+            return "accessScope == 'ALL' || uploadedBy == '" + escapedEmail + "'";
         }
 
-        // Build filter: departmentId IN (...) || uploadedBy == email
-        String deptList = visibleDeptIds.stream()
-                .map(String::valueOf)
-                .collect(Collectors.joining(", "));
-        return "departmentId in (" + deptList + ") || uploadedBy == '" + email.replace("'", "''") + "'";
+        // Build filter: shared documents OR departmentId == ... (OR-chained) OR uploadedBy == email.
+        // NOTE: the Spring AI filter expression grammar used by SearchRequest does not support
+        // the "in (...)" operator, so the department set is emitted as OR-joined equalities.
+        String deptClauses = visibleDeptIds.stream()
+                .distinct()
+                .map(id -> "departmentId == " + id)
+                .collect(Collectors.joining(" || "));
+
+        return "accessScope == 'ALL' || " + deptClauses + " || uploadedBy == '" + escapedEmail + "'";
+    }
+
+    /**
+     * Escapes a value for the Spring AI filter-expression text grammar.
+     *
+     * <p>Unlike SQL, this grammar escapes with a backslash rather than by doubling
+     * the quote, so a naive {@code replace("'", "''")} produces an expression the
+     * parser rejects. Backslashes are escaped first to keep the escaping total.
+     */
+    private static String escapeFilterLiteral(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("'", "\\'");
     }
 }
