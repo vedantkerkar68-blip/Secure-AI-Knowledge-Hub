@@ -18,6 +18,33 @@
 # `flyway.schemas` and `default-schema` confine every migration object to the
 # sakh_test schema, so the application schemas in `public` are never migrated or
 # dropped.
+#
+# SCHEMA ISOLATION IS NOT SUFFICIENT ON ITS OWN
+# --------------------------------------------
+# Flyway's `CREATE EXTENSION IF NOT EXISTS vector` is database-scoped, so an
+# unintended or production database would still be mutated even with every migration
+# object landing in `sakh_test`. TestDatabaseSafetyGuard therefore validates the
+# effective host and database and runs during environment preparation - before any
+# DataSource, Flyway, or EntityManagerFactory bean exists - so a rejected target never
+# even opens a connection. See com.sakh.support.TestDatabaseSafetyGuard.
+#
+# CI / ALLOW-LISTING AN ISOLATED TEST DATABASE
+# -------------------------------------------
+# Default allow-list: hosts localhost / 127.0.0.1 / ::1, databases sakh_db / sakh_test.
+# A CI runner using a different, genuinely isolated test database must declare it:
+#
+#   SPRING_TEST_DATASOURCE_URL=jdbc:postgresql://ci-db.internal:5432/sakh_test
+#   SAKH_TEST_DB_ALLOWED_HOSTS=ci-db.internal
+#   SAKH_TEST_DB_ALLOWED_DATABASES=sakh_test
+#
+# Hosts belonging to managed production providers (Supabase, Neon, Railway, ...)
+# are rejected unconditionally and cannot be allow-listed. There is deliberately no
+# "skip the guard" switch.
+
+sakh:
+  test-db:
+    allowed-hosts: ${SAKH_TEST_DB_ALLOWED_HOSTS:}
+    allowed-databases: ${SAKH_TEST_DB_ALLOWED_DATABASES:}
 
 spring:
   datasource:
