@@ -1,7 +1,61 @@
+# Test profile configuration.
+#
+# ISOLATION
+# ---------
+# Tests must never run against the development schema or a production database.
+#
+# This profile deliberately does NOT read SPRING_DATASOURCE_* : those variables are
+# documented in .env.example with Supabase and Neon *production* connection details,
+# and inheriting them meant a developer or CI runner with those exported would run
+# the whole suite - including Flyway migrations - against production.
+#
+# Instead the tests use their own SPRING_TEST_DATASOURCE_* variables, defaulting to a
+# dedicated `sakh_test` SCHEMA inside the local development server. Isolation is at
+# the schema level rather than the database level so no extra server, container, or
+# provisioning step is required; Flyway creates the schema automatically.
+#
+# Containment: even if SPRING_TEST_DATASOURCE_URL were pointed at a different server,
+# `flyway.schemas` and `default-schema` confine every migration object to the
+# sakh_test schema, so the application schemas in `public` are never migrated or
+# dropped.
+
 spring:
+  datasource:
+    # `public` stays on the search_path because the pgvector `vector` type is
+    # installed there by V6; unqualified DDL/DML still lands in `sakh_test`,
+    # which is first on the path.
+    url: ${SPRING_TEST_DATASOURCE_URL:jdbc:postgresql://localhost:5432/sakh_db?currentSchema=sakh_test,public}
+    username: ${SPRING_TEST_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_TEST_DATASOURCE_PASSWORD:root}
+
   jpa:
     show-sql: true
+    properties:
+      hibernate:
+        default_schema: sakh_test
+
+  flyway:
+    enabled: true
+    # `public` is listed only so the pgvector extension type resolves during
+    # migration; it is never created, and every migration object goes to
+    # default-schema (sakh_test).
+    schemas: sakh_test,public
+    default-schema: sakh_test
+    create-schemas: true
 
 logging:
   level:
     com.sakh: DEBUG
+
+spring.ai:
+  vectorstore:
+    pgvector:
+      # PgVectorStore qualifies its table with an explicit schema name that
+      # defaults to "public" and ignores the connection search_path. Without this
+      # the tests would keep reading and writing the shared development
+      # vector_store table, defeating the schema isolation above. Flyway has
+      # already created the table in sakh_test, so initialize-schema stays off.
+      # (Qualifying the table name itself does not work: PgVectorStore would
+      # render it as "public.sakh_test.vector_store".)
+      schema-name: sakh_test
+      table-name: vector_store

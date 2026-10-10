@@ -54,15 +54,20 @@ public class DocumentProcessingService {
 
             metadataService.extractAndSave(document);
 
+            // Remove any vectors previously written for this document BEFORE touching
+            // chunks and before adding anything new.
+            //
+            // Ordering matters: PgVectorStore.add() upserts on the Document id, but
+            // ingested Documents carry no id, so every add() inserts a fresh
+            // random-UUID row. If the old vectors were still present when we added,
+            // reprocessing would silently duplicate them. Chunk rows are destroyed
+            // and rebuilt by chunkDocument(), so doing the vector delete first means a
+            // failed cleanup leaves the previous chunks and the previous vectors
+            // untouched and mutually consistent.
+            deleteExistingVectors(document.getId());
+
             List<Chunk> chunks = chunkService.chunkDocument(document, extractedText);
             logger.info("Document {}: created {} chunks", documentId, chunks.size());
-
-            // Remove any vectors previously written for this document before re-adding.
-            // PgVectorStore.add() upserts on the Document id, but ingested Documents
-            // carry no id, so every add() inserts a fresh random-UUID row. Without this
-            // delete, reprocessing would leave the old vectors behind as duplicates
-            // (stale text and stale metadata, and unbounded storage growth).
-            deleteExistingVectors(document.getId());
 
             List<org.springframework.ai.document.Document> springAiDocs = chunks.stream()
                     .map(chunk -> {
@@ -106,17 +111,23 @@ public class DocumentProcessingService {
     /**
      * Deletes every vector row belonging to the given document.
      *
-     * <p>Chunk rows are removed by {@link ChunkService#chunkDocument}, but the vector
-     * store has no cascade, so this must be done explicitly before re-adding.
-     * Failures are logged rather than thrown: a document must not be stranded in
-     * PROCESSING because an old vector could not be cleaned up.
+     * <p>This is fail-fast by design. The vector store is an external store with no
+     * transaction and no cascade, so a cleanup that fails must abort the whole
+     * operation rather than continue: adding new vectors while stale ones remain is
+     * exactly the duplication that this delete exists to prevent, and it would leave
+     * the document permanently serving duplicated or outdated chunks.
+     *
+     * <p>The thrown exception is handled by {@link #processDocument}'s existing
+     * catch block, which marks the document {@link DocumentStatus#FAILED}.
      */
     private void deleteExistingVectors(Long documentId) {
         try {
             vectorStore.delete("documentId == " + documentId);
             logger.info("Removed pre-existing vectors for document {}", documentId);
         } catch (Exception e) {
-            logger.error("Failed to remove pre-existing vectors for document {}: {}", documentId, e.getMessage());
+            throw new IllegalStateException(
+                    "Failed to remove pre-existing vectors for document " + documentId
+                            + "; aborting to avoid duplicate vector entries", e);
         }
     }
 
