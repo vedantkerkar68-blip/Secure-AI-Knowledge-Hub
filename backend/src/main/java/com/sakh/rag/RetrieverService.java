@@ -37,6 +37,12 @@ public class RetrieverService {
     private static final double KEYWORD_WEIGHT = 0.3;
     private static final int HYBRID_MULTIPLIER = 2;
 
+    /**
+     * Sentinel department id used to keep the keyword SQL IN-list non-empty for users
+     * with no visible department. No real department uses this id.
+     */
+    private static final Long NO_DEPARTMENT_SENTINEL = -1L;
+
     private final VectorStore vectorStore;
     private final ChunkRepository chunkRepository;
     private final DocumentRepository documentRepository;
@@ -210,7 +216,21 @@ public class RetrieverService {
 
     private List<Document> keywordSearch(String question, String role, List<Long> visibleDepartmentIds,
                                          String email, int topK) {
-        List<Object[]> rows = chunkRepository.findKeywordSearchGlobal(question, topK);
+        boolean unrestricted = "ADMIN".equals(role);
+        // Shared documents are visible to every authenticated user, so the candidate
+        // query must admit them for every non-admin role.
+        boolean includeShared = true;
+        // Own-upload fallback is an EMPLOYEE-only privilege.
+        boolean includeOwnUploads = "EMPLOYEE".equals(role);
+
+        // The IN list must never be empty; -1 is a sentinel that matches no real department.
+        List<Long> deptIds = visibleDepartmentIds == null || visibleDepartmentIds.isEmpty()
+                ? List.of(NO_DEPARTMENT_SENTINEL)
+                : visibleDepartmentIds;
+
+        List<Object[]> rows = chunkRepository.findKeywordSearchGlobal(
+                question, topK, deptIds, email == null ? "" : email,
+                unrestricted, includeShared, includeOwnUploads);
 
         List<Document> results = new ArrayList<>();
 
@@ -219,6 +239,8 @@ public class RetrieverService {
             String uploadedBy = row[7] != null ? row[7].toString() : null;
             AccessScope rowScope = parseAccessScope(row[8]);
 
+            // Defence in depth: the SQL predicate already restricted the rows, but the
+            // policy is re-applied here so a query change cannot widen the candidate set.
             if (!isCandidateAccessible(role, visibleDepartmentIds, email, rowDeptId, uploadedBy, rowScope)) {
                 continue;
             }

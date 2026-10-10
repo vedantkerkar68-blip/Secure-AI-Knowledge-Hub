@@ -50,6 +50,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -159,7 +161,8 @@ class ChatIntegrationTest {
         when(documentRepository.findAllById(any(Iterable.class))).thenReturn(List.of(entityDoc));
 
         // Mock chunkRepository to return empty results for keyword search
-        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt())).thenReturn(List.of());
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean())).thenReturn(List.of());
         when(chunkRepository.findKeywordSearchInDocument(anyString(), anyLong(), anyInt())).thenReturn(List.of());
 
         // Mock vector store to return a document with the correct metadata

@@ -57,6 +57,13 @@ public class DocumentProcessingService {
             List<Chunk> chunks = chunkService.chunkDocument(document, extractedText);
             logger.info("Document {}: created {} chunks", documentId, chunks.size());
 
+            // Remove any vectors previously written for this document before re-adding.
+            // PgVectorStore.add() upserts on the Document id, but ingested Documents
+            // carry no id, so every add() inserts a fresh random-UUID row. Without this
+            // delete, reprocessing would leave the old vectors behind as duplicates
+            // (stale text and stale metadata, and unbounded storage growth).
+            deleteExistingVectors(document.getId());
+
             List<org.springframework.ai.document.Document> springAiDocs = chunks.stream()
                     .map(chunk -> {
                         Map<String,Object> metadata = new HashMap<>();
@@ -93,6 +100,23 @@ public class DocumentProcessingService {
             logger.error("Document processing failed for document ID: {}", documentId, e);
             document.setStatus(DocumentStatus.FAILED);
             documentRepository.save(document);
+        }
+    }
+
+    /**
+     * Deletes every vector row belonging to the given document.
+     *
+     * <p>Chunk rows are removed by {@link ChunkService#chunkDocument}, but the vector
+     * store has no cascade, so this must be done explicitly before re-adding.
+     * Failures are logged rather than thrown: a document must not be stranded in
+     * PROCESSING because an old vector could not be cleaned up.
+     */
+    private void deleteExistingVectors(Long documentId) {
+        try {
+            vectorStore.delete("documentId == " + documentId);
+            logger.info("Removed pre-existing vectors for document {}", documentId);
+        } catch (Exception e) {
+            logger.error("Failed to remove pre-existing vectors for document {}: {}", documentId, e.getMessage());
         }
     }
 

@@ -32,7 +32,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -236,7 +238,8 @@ class RetrieverServiceTest {
                 DocumentStatus.READY, "owner@sakh.com");
 
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
-        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt()))
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean()))
                 .thenReturn(List.<Object[]>of(new Object[]{
                         1L, doc.getId(), 0, "keyword chunk", 1, "Section",
                         UNRELATED_DEPT_ID, "owner@sakh.com", "LEGACY_SCOPE", 1.0d
@@ -272,7 +275,8 @@ class RetrieverServiceTest {
      * 6 departmentId, 7 uploaderEmail, 8 accessScope, 9 rank.
      */
     private void stubKeywordRow(Long documentId, Long departmentId, AccessScope scope, String uploadedBy) {
-        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt()))
+        when(chunkRepository.findKeywordSearchGlobal(anyString(), anyInt(), anyList(), anyString(),
+                anyBoolean(), anyBoolean(), anyBoolean()))
                 .thenReturn(List.<Object[]>of(new Object[]{
                         1L, documentId, 0, "keyword chunk", 1, "Section",
                         departmentId, uploadedBy, scope.name(), 1.0d
