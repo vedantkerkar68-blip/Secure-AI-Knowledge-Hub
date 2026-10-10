@@ -5,6 +5,7 @@ import com.sakh.entity.Department;
 import com.sakh.entity.Role;
 import com.sakh.entity.User;
 import com.sakh.enums.UserStatus;
+import com.sakh.repository.ChatSessionRepository;
 import com.sakh.repository.DepartmentRepository;
 import com.sakh.repository.RoleRepository;
 import com.sakh.repository.UserRepository;
@@ -23,10 +24,12 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
-import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.AuthorityUtils;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.List;
@@ -39,7 +42,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Transactional
 @ActiveProfiles("test")
 class ChatIntegrationTest {
 
@@ -64,10 +66,12 @@ class ChatIntegrationTest {
     @Autowired
     private DepartmentRepository departmentRepository;
 
+    @Autowired
+    private ChatSessionRepository sessionRepository;
+
     private ChatSession session;
 
-    @BeforeEach
-    void setUp() {
+    private ChatSession setupTestSession() {
         Role role = roleRepository.findAll().stream()
                 .filter(r -> "ADMIN".equals(r.getName()))
                 .findFirst()
@@ -75,21 +79,29 @@ class ChatIntegrationTest {
 
         Department department = new Department();
         department.setName("Engineering");
-        department = departmentRepository.save(department);
+        Department savedDepartment = departmentRepository.save(department);
 
-        User user = new User();
-        user.setFirstName("Admin");
-        user.setLastName("User");
-        user.setEmail("admin@sakh.com");
-        user.setPasswordHash("$2a$10$dummyhash");
-        user.setRole(role);
-        user.setDepartment(department);
-        user.setStatus(UserStatus.ACTIVE);
-        user.setCreatedAt(Instant.now());
-        user.setUpdatedAt(Instant.now());
-        userRepository.save(user);
+        // Check if user already exists to avoid unique constraint violations
+        // when transactional rollback doesn't clean up in time between tests
+        String testEmail = "admin@sakh.com";
+        User user = userRepository.findByEmail(testEmail).orElse(null);
+        if (user == null) {
+            User newUser = new User();
+            newUser.setFirstName("Admin");
+            newUser.setLastName("User");
+            newUser.setEmail(testEmail);
+            newUser.setPasswordHash("$2a$10$dummyhash");
+            newUser.setRole(role);
+            newUser.setDepartment(savedDepartment);
+            newUser.setStatus(UserStatus.ACTIVE);
+            newUser.setCreatedAt(Instant.now());
+            newUser.setUpdatedAt(Instant.now());
+            user = userRepository.save(newUser);
+            userRepository.flush();
+        }
 
-        session = chatService.createSession(user, "Test Chat");
+        ChatSession session = chatService.createSession(user, "Test Chat");
+        sessionRepository.flush();
 
         Document doc = Document.builder()
                 .text("Company policy requires 30 days notice for resignation.")
@@ -98,8 +110,8 @@ class ChatIntegrationTest {
                         "chunkIndex", 0,
                         "pageNumber", 1,
                         "sectionTitle", "Resignation Policy",
-                        "departmentId", department.getId(),
-                        "uploadedBy", "admin@sakh.com"
+                        "departmentId", savedDepartment.getId(),
+                        "uploadedBy", testEmail
                 ))
                 .score(0.95)
                 .build();
@@ -114,11 +126,19 @@ class ChatIntegrationTest {
                 new org.springframework.ai.chat.model.ChatResponse(List.of(generation));
 
         when(chatModel.call(any(Prompt.class))).thenReturn(aiResponse);
+
+        return session;
     }
 
     @Test
-    @WithMockUser(username = "admin@sakh.com", roles = {"ADMIN"})
     void sendMessage_withValidRequest_returnsAnswerWithCitationsAndConfidence() throws Exception {
+        ChatSession session = setupTestSession();
+        
+        // Manually set up authentication for the test
+        Authentication auth = new UsernamePasswordAuthenticationToken(
+                "admin@sakh.com", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN"));
+        SecurityContextHolder.getContext().setAuthentication(auth);
+        
         mockMvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"sessionId\": " + session.getId() + ", \"question\": \"What is the resignation policy?\"}"))
@@ -131,8 +151,14 @@ class ChatIntegrationTest {
     }
 
     @Test
-    @WithMockUser(username = "admin@sakh.com", roles = {"ADMIN"})
     void sendMessage_withEmptyQuestion_returnsBadRequest() throws Exception {
+        ChatSession session = setupTestSession();
+        
+        // Manually set up authentication for the test
+        Authentication auth = new UsernamePasswordAuthenticationToken(
+                "admin@sakh.com", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN"));
+        SecurityContextHolder.getContext().setAuthentication(auth);
+        
         mockMvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"sessionId\": " + session.getId() + ", \"question\": \"\"}"))
@@ -140,8 +166,14 @@ class ChatIntegrationTest {
     }
 
     @Test
-    @WithMockUser(username = "admin@sakh.com", roles = {"ADMIN"})
     void sendMessage_withInvalidSession_returnsNotFound() throws Exception {
+        setupTestSession();
+        
+        // Manually set up authentication for the test
+        Authentication auth = new UsernamePasswordAuthenticationToken(
+                "admin@sakh.com", null, AuthorityUtils.createAuthorityList("ROLE_ADMIN"));
+        SecurityContextHolder.getContext().setAuthentication(auth);
+        
         mockMvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"sessionId\": 999999, \"question\": \"What is the policy?\"}"))

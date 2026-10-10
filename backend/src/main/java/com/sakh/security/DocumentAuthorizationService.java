@@ -182,18 +182,18 @@ public class DocumentAuthorizationService {
         // Check department visibility: own department + ancestors
         List<Long> visibleDepartmentIds = getVisibleDepartmentIds(user);
         if (!visibleDepartmentIds.contains(document.getDepartment().getId())) {
+            // Department visibility failed - but EMPLOYEE can still see their own uploads
+            if ("EMPLOYEE".equals(userRole)
+                    && document.getUploadedBy() != null
+                    && user.getEmail() != null
+                    && document.getUploadedBy().getEmail().equalsIgnoreCase(user.getEmail())) {
+                return true;
+            }
             return false;
         }
 
-        // EMPLOYEE can also see their own uploads
-        if ("EMPLOYEE".equals(user.getRole() != null ? user.getRole().getName() : "")
-                && document.getUploadedBy() != null
-                && user.getEmail() != null
-                && document.getUploadedBy().getEmail().equalsIgnoreCase(user.getEmail())) {
-            return true;
-        }
-
-        return false;
+        // Department visibility passed - all non-admin roles (MANAGER, EMPLOYEE) can access
+        return true;
     }
 
     /**

@@ -20,8 +20,11 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -92,14 +95,36 @@ public class RetrieverService {
         List<Document> keywordResults = keywordSearch(rewritten, role, departmentId, user.getEmail(), fetchSize);
         logger.debug("Keyword search returned {} results", keywordResults.size());
 
-        // Filter results through centralized authorization
+        // Filter results through centralized authorization - optimize by checking per document, not per chunk
         List<Document> merged = mergeAndRank(semanticResults, keywordResults, topK);
+        
+        // Collect distinct document IDs to avoid repeated DB queries
+        Set<Long> distinctDocIds = merged.stream()
+                .map(doc -> {
+                    Object docIdObj = doc.getMetadata().get("documentId");
+                    return docIdObj instanceof Number num ? num.longValue() : null;
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        
+        // Fetch documents once and build authorization map
+        Map<Long, Boolean> authCache = new HashMap<>();
+        if (!distinctDocIds.isEmpty()) {
+            List<com.sakh.entity.Document> documents = documentRepository.findAllById(distinctDocIds);
+            for (com.sakh.entity.Document doc : documents) {
+                authCache.put(doc.getId(), authorizationService.isAccessibleForRag(doc, user));
+            }
+        }
+        // Missing documents fail closed
+        for (Long docId : distinctDocIds) {
+            authCache.putIfAbsent(docId, false);
+        }
+        
         List<Document> authorized = merged.stream()
                 .filter(doc -> {
                     Object docIdObj = doc.getMetadata().get("documentId");
                     if (docIdObj instanceof Number num) {
-                        return authorizationService.isAccessibleForRag(
-                                documentRepository.findById(num.longValue()).orElse(null), getCurrentUser());
+                        return authCache.getOrDefault(num.longValue(), false);
                     }
                     return false;
                 })
@@ -142,16 +167,13 @@ public class RetrieverService {
 
         List<Document> merged = mergeAndRank(semanticResults, keywordResults, topK);
 
-        // Apply final centralized authorization filter to ensure no unauthorized chunks reach LLM
+        // Apply final centralized authorization filter - optimized for single document
+        // Since this is scoped to one document, we check once
+        boolean docAuthorized = authorizationService.isAccessibleForRag(
+                documentRepository.findById(documentId).orElse(null), user);
+        
         List<Document> authorized = merged.stream()
-                .filter(doc -> {
-                    Object docIdObj = doc.getMetadata().get("documentId");
-                    if (docIdObj instanceof Number num) {
-                        return authorizationService.isAccessibleForRag(
-                                documentRepository.findById(num.longValue()).orElse(null), user);
-                    }
-                    return false;
-                })
+                .filter(doc -> docAuthorized)
                 .toList();
 
         long elapsed = System.currentTimeMillis() - start;
@@ -164,27 +186,9 @@ public class RetrieverService {
         com.sakh.entity.Document document = documentRepository.findById(documentId)
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found with id: " + documentId));
 
-        if (document.getStatus() != DocumentStatus.READY) {
-            throw new ResourceNotFoundException("Document is not ready for queries with id: " + documentId);
-        }
-
-        String role = user.getRole() != null ? user.getRole().getName() : "";
-        if ("ADMIN".equals(role)) {
-            return;
-        }
-
-        Long docDeptId = document.getDepartment() != null ? document.getDepartment().getId() : null;
-        Long userDeptId = user.getDepartment() != null ? user.getDepartment().getId() : null;
-
-        boolean sameDepartment = docDeptId != null && docDeptId.equals(userDeptId);
-        boolean ownUpload = "EMPLOYEE".equals(role)
-                && document.getUploadedBy() != null
-                && user.getEmail() != null
-                && document.getUploadedBy().getEmail().equalsIgnoreCase(user.getEmail());
-
-        if (!sameDepartment && !ownUpload) {
-            throw new AccessDeniedException("Access denied to document: " + documentId);
-        }
+        // Use centralized authorization policy for consistency with DocumentService and RAG retrieval
+        authorizationService.checkDocumentViewAccess(document, user);
+        authorizationService.requireReadable(document, user);
     }
 
     private List<Document> semanticSearch(String question, String role, Long departmentId,
